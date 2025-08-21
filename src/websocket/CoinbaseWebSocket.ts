@@ -9,23 +9,24 @@ import {
   Level2Update,
   HeartbeatMessage,
   ErrorMessage,
+  SubscriptionsMessage,
 } from "../types/coinbase";
 
 export interface CoinbaseConfig {
   channels: string[];
   productIds: string[];
-  auth?: {
-    apiKey: string; // organizations/{org_id}/apiKeys/{key_id}
-    apiSecret: string; // EC private key with newlines
-  };
 }
 
 export class CoinbaseWebSocket extends EventEmitter {
   private connection: WebSocketConnection;
   private sequenceNumbers: Map<string, number> = new Map();
   private config: CoinbaseConfig;
-  private messageBuffer: CoinbaseWebSocketMessage[] = [];
-  private isProcessing = false;
+  private activeSubscriptions: Map<string, Set<string>> = new Map();
+  private pendingSubscriptions: Array<{
+    channel: string;
+    productIds: string[];
+  }> = [];
+  private isConnected = false;
 
   constructor(config: CoinbaseConfig) {
     super();
@@ -49,44 +50,87 @@ export class CoinbaseWebSocket extends EventEmitter {
   }
 
   public disconnect(): void {
+    this.isConnected = false;
     this.connection.disconnect();
   }
 
-  public subscribe(channels: string[], productIds: string[]): void {
+  public subscribe(channel: string, productIds: string[]): void {
+    // If not connected yet, queue the subscription
+    if (!this.isConnected) {
+      this.pendingSubscriptions.push({ channel, productIds });
+      return;
+    }
+
     const subscribeMessage: SubscriptionMessage = {
       type: "subscribe",
-      channels: channels,
+      channel: channel,
       product_ids: productIds,
     };
 
-    if (this.config.auth) {
-      // Add authentication if provided
-      // Implementation depends on Coinbase auth requirements
+    // Track the subscription
+    if (!this.activeSubscriptions.has(channel)) {
+      this.activeSubscriptions.set(channel, new Set());
     }
+    const channelProducts = this.activeSubscriptions.get(channel)!;
+    productIds.forEach((productId) => channelProducts.add(productId));
 
+    console.log(`Subscribing to ${channel} with products:`, productIds);
     this.connection.send(subscribeMessage);
   }
 
-  public unsubscribe(channels: string[], productIds: string[]): void {
+  public unsubscribe(channel: string, productIds: string[]): void {
+    if (!this.isConnected) {
+      return;
+    }
+
     const unsubscribeMessage: SubscriptionMessage = {
       type: "unsubscribe",
-      channels: channels,
+      channel: channel,
       product_ids: productIds,
     };
+
+    // Update tracking
+    const channelProducts = this.activeSubscriptions.get(channel);
+    if (channelProducts) {
+      productIds.forEach((productId) => channelProducts.delete(productId));
+      if (channelProducts.size === 0) {
+        this.activeSubscriptions.delete(channel);
+      }
+    }
 
     this.connection.send(unsubscribeMessage);
   }
 
+  public getSubscribedChannels(): string[] {
+    return Array.from(this.activeSubscriptions.keys());
+  }
+
+  public getSubscribedProducts(channel: string): string[] {
+    const products = this.activeSubscriptions.get(channel);
+    return products ? Array.from(products) : [];
+  }
+
+  public getActiveSubscriptions(): Map<string, Set<string>> {
+    return new Map(this.activeSubscriptions);
+  }
+
   private setupEventHandlers(): void {
     this.connection.on("connected", () => {
+      console.log("WebSocket connected to Coinbase");
+      this.isConnected = true;
       this.emit("connected");
-      // Auto-subscribe to configured channels
-      if (this.config.channels.length && this.config.productIds.length) {
-        this.subscribe(this.config.channels, this.config.productIds);
-      }
+
+      // First subscribe to heartbeat to keep connection alive
+      this.subscribe("heartbeats", []);
+
+      // Process any pending subscriptions
+      setTimeout(() => {
+        this.processPendingSubscriptions();
+      }, 100);
     });
 
     this.connection.on("disconnected", (data) => {
+      this.isConnected = false;
       this.emit("disconnected", data);
     });
 
@@ -100,21 +144,39 @@ export class CoinbaseWebSocket extends EventEmitter {
 
     this.connection.on("reconnecting", (data) => {
       this.emit("reconnecting", data);
+      this.activeSubscriptions.clear();
     });
+  }
+
+  private processPendingSubscriptions(): void {
+    // Process pending subscriptions
+    const pending = [...this.pendingSubscriptions];
+    this.pendingSubscriptions = [];
+
+    for (const sub of pending) {
+      this.subscribe(sub.channel, sub.productIds);
+    }
+
+    // Auto-subscribe to configured channels if any
+    if (this.config.channels.length && this.config.productIds.length) {
+      for (const channel of this.config.channels) {
+        if (!this.activeSubscriptions.has(channel)) {
+          this.subscribe(channel, this.config.productIds);
+        }
+      }
+    }
   }
 
   private handleMessage(message: CoinbaseWebSocketMessage): void {
     // Check sequence number if present
-    if (message.sequence && message.product_id) {
+    if (message.sequence !== undefined && message.product_id) {
       const lastSequence = this.sequenceNumbers.get(message.product_id) || 0;
 
       if (message.sequence <= lastSequence) {
-        // Old message, ignore
-        return;
+        return; // Old message, ignore
       }
 
       if (message.sequence > lastSequence + 1) {
-        // Gap detected
         this.emit("sequence_gap", {
           product_id: message.product_id,
           expected: lastSequence + 1,
@@ -140,10 +202,16 @@ export class CoinbaseWebSocket extends EventEmitter {
         break;
 
       case "error":
-        this.emit("error", new Error((message as ErrorMessage).message));
+        const errorMsg = message as ErrorMessage;
+        console.error("Coinbase WebSocket error message:", errorMsg);
+        this.emit(
+          "error",
+          new Error(errorMsg.message || errorMsg.reason || "Unknown error")
+        );
         break;
 
       case "subscriptions":
+        this.updateSubscriptionsFromMessage(message as SubscriptionsMessage);
         this.emit("subscriptions", message);
         break;
 
@@ -151,15 +219,25 @@ export class CoinbaseWebSocket extends EventEmitter {
         this.emit("message", message);
     }
 
-    // Also emit raw message for any listeners
     this.emit("raw_message", message);
+  }
+
+  private updateSubscriptionsFromMessage(message: SubscriptionsMessage): void {
+    this.activeSubscriptions.clear();
+
+    if (message.channels) {
+      message.channels.forEach((channelInfo) => {
+        const channelName = channelInfo.name;
+        const products = new Set(channelInfo.product_ids);
+        this.activeSubscriptions.set(channelName, products);
+      });
+    }
   }
 
   public getConnectionState(): ConnectionState {
     return this.connection.getState();
   }
 
-  // Get all tracked products
   public getTrackedProducts(): string[] {
     return Array.from(this.sequenceNumbers.keys());
   }

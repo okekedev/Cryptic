@@ -42,11 +42,11 @@ export interface HeartbeatMessage extends CoinbaseWebSocketMessage {
   time: string;
 }
 
+// Simplified without JWT
 export interface SubscriptionMessage {
   type: "subscribe" | "unsubscribe";
   product_ids: string[];
-  channel: string; // Single channel per message according to docs
-  jwt?: string; // JWT for authenticated channels
+  channel: string;
 }
 
 export interface ErrorMessage extends CoinbaseWebSocketMessage {

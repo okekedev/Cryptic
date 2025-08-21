@@ -4,324 +4,398 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Crypto Prices - Real Time</title>
+    <title>Crypto Trading Bot - All USD Pairs</title>
+    <script src="/socket.io/socket.io.js"></script>
     <style>
         body {
-            font-family: "Times New Roman", Times, serif;
-            margin: 20px;
-            background: white;
-            color: black;
-            line-height: 1.4;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #1a1a1a;
+            color: #ffffff;
         }
 
-        h1 {
-            font-size: 24px;
-            margin-bottom: 10px;
-            color: #0000EE;
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .stats {
+            display: flex;
+            gap: 20px;
+            font-size: 14px;
+        }
+
+        .stat-item {
+            background-color: #2a2a2a;
+            padding: 10px 20px;
+            border-radius: 5px;
         }
 
         .status {
-            font-size: 14px;
+            padding: 10px;
+            border-radius: 5px;
             margin-bottom: 20px;
-            padding: 5px;
-            background: #f0f0f0;
-            border: 1px solid #ccc;
+            font-weight: bold;
         }
 
         .connected {
-            background: #d4ffd4;
+            background-color: #4CAF50;
         }
 
         .disconnected {
-            background: #ffd4d4;
-        }
-
-        .reconnecting {
-            background: #ffffd4;
-        }
-
-        table {
-            border-collapse: collapse;
-            width: 100%;
-            font-size: 14px;
-        }
-
-        th,
-        td {
-            text-align: left;
-            padding: 4px 8px;
-            border: 1px solid #ccc;
-        }
-
-        th {
-            background: #e0e0e0;
-            font-weight: bold;
-        }
-
-        tr:hover {
-            background: #f5f5f5;
-        }
-
-        .price {
-            font-weight: bold;
-        }
-
-        .up {
-            color: green;
-        }
-
-        .down {
-            color: red;
-        }
-
-        .change {
-            font-size: 12px;
+            background-color: #f44336;
         }
 
         .controls {
-            margin: 20px 0;
+            margin-bottom: 30px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
         }
 
-        button {
-            padding: 5px 10px;
-            margin-right: 10px;
-            font-family: inherit;
+        .controls button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s;
         }
 
-        input[type="text"] {
-            padding: 4px;
+        .controls button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        .subscribe-all-btn {
+            background-color: #4CAF50;
+            color: white;
+        }
+
+        .subscribe-popular-btn {
+            background-color: #2196F3;
+            color: white;
+        }
+
+        .unsubscribe-btn {
+            background-color: #FF9800;
+            color: white;
+        }
+
+        .search-box {
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #444;
+            background-color: #2a2a2a;
+            color: white;
+            font-size: 16px;
             width: 300px;
-            font-family: inherit;
         }
 
-        .info {
-            font-size: 12px;
-            color: #666;
+        .ticker-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 15px;
             margin-top: 20px;
         }
 
-        .error {
-            color: red;
+        .ticker-card {
+            background-color: #2a2a2a;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+            transition: transform 0.2s;
+        }
+
+        .ticker-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+        }
+
+        .ticker-header {
+            font-size: 20px;
             font-weight: bold;
-            margin: 10px 0;
+            margin-bottom: 10px;
+            color: #4CAF50;
+        }
+
+        .ticker-price {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        .ticker-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            font-size: 12px;
+        }
+
+        .ticker-info div {
+            padding: 4px;
+            background-color: #1a1a1a;
+            border-radius: 4px;
+        }
+
+        .positive {
+            color: #4CAF50;
+        }
+
+        .negative {
+            color: #f44336;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 50px;
+            font-size: 20px;
+            color: #666;
+        }
+
+        .sort-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-left: auto;
+        }
+
+        .sort-controls select {
+            padding: 8px;
+            border-radius: 5px;
+            border: 1px solid #444;
+            background-color: #2a2a2a;
+            color: white;
+            font-size: 14px;
         }
     </style>
 </head>
 
 <body>
-    <h1>Crypto Price Monitor</h1>
+    <div class="container">
+        <div class="header">
+            <h1>Cryptocurrency Trading Bot - All USD Pairs</h1>
+            <div class="stats">
+                <div class="stat-item">
+                    <strong>Available Pairs:</strong> <span id="available-count">0</span>
+                </div>
+                <div class="stat-item">
+                    <strong>Subscribed:</strong> <span id="subscribed-count">0</span>
+                </div>
+                <div class="stat-item">
+                    <strong>Active Tickers:</strong> <span id="active-count">0</span>
+                </div>
+            </div>
+        </div>
 
-    <div id="status" class="status disconnected">
-        Status: <span id="connection-status">Disconnected</span>
+        <div id="status" class="status disconnected">
+            Disconnected from server
+        </div>
+
+        <div id="coinbase-status" class="status disconnected">
+            Disconnected from Coinbase
+        </div>
+
+        <div class="controls">
+            <button class="subscribe-all-btn" onclick="subscribeToAll()">Subscribe to All USD Pairs</button>
+            <button class="subscribe-popular-btn" onclick="subscribeToPopular()">Popular Pairs Only</button>
+            <button class="unsubscribe-btn" onclick="unsubscribeAll()">Unsubscribe All</button>
+            <input type="text" class="search-box" id="search" placeholder="Search pairs (e.g. BTC, ETH)..."
+                oninput="filterTickers()">
+            <div class="sort-controls">
+                <label>Sort by:</label>
+                <select id="sort-select" onchange="sortTickers()">
+                    <option value="name">Name</option>
+                    <option value="price">Price</option>
+                    <option value="change">24h Change</option>
+                    <option value="volume">Volume</option>
+                </select>
+            </div>
+        </div>
+
+        <div id="tickers" class="ticker-grid">
+            <div class="loading">Connecting to Coinbase...</div>
+        </div>
     </div>
 
-    <div class="controls">
-        <button id="connect-btn">Connect</button>
-        <button id="disconnect-btn" disabled>Disconnect</button>
-        <button id="clear-btn">Clear</button>
-        <br><br>
-        <label>Products (comma separated): </label>
-        <input type="text" id="products" value="BTC-USD,ETH-USD,SOL-USD" />
-        <button id="subscribe-btn">Subscribe</button>
-    </div>
-
-    <div id="error" class="error" style="display:none;"></div>
-
-    <table id="price-table">
-        <thead>
-            <tr>
-                <th>Product</th>
-                <th>Price</th>
-                <th>24h Change</th>
-                <th>24h High</th>
-                <th>24h Low</th>
-                <th>24h Volume</th>
-                <th>Bid</th>
-                <th>Ask</th>
-                <th>Last Update</th>
-            </tr>
-        </thead>
-        <tbody id="price-tbody">
-            <tr>
-                <td colspan="9" style="text-align:center; color:#666;">
-                    No data - Click Connect to start
-                </td>
-            </tr>
-        </tbody>
-    </table>
-
-    <div class="info">
-        <p>Updates: <span id="update-count">0</span> |
-            Active Products: <span id="product-count">0</span> |
-            Uptime: <span id="uptime">0s</span></p>
-        <p>Simple real-time crypto price monitor. No frills, just data.</p>
-    </div>
-
-    <script src="/socket.io/socket.io.js"></script>
     <script>
-        // State
-        let socket = null;
-        let prices = {};
-        let updateCount = 0;
-        let connectedTime = null;
+        const socket = io();
+        const tickers = {};
+        let availablePairs = [];
+        let subscribedPairs = [];
+        let searchFilter = '';
+        let currentSort = 'name';
 
-        // Elements
-        const statusEl = document.getElementById('status');
-        const statusTextEl = document.getElementById('connection-status');
-        const connectBtn = document.getElementById('connect-btn');
-        const disconnectBtn = document.getElementById('disconnect-btn');
-        const clearBtn = document.getElementById('clear-btn');
-        const subscribeBtn = document.getElementById('subscribe-btn');
-        const productsInput = document.getElementById('products');
-        const priceTableBody = document.getElementById('price-tbody');
-        const errorEl = document.getElementById('error');
-        const updateCountEl = document.getElementById('update-count');
-        const productCountEl = document.getElementById('product-count');
-        const uptimeEl = document.getElementById('uptime');
-
-        // Connect to server
-        function connect() {
-            socket = io();
-
-            socket.on('connect', () => {
-                statusEl.className = 'status connected';
-                statusTextEl.textContent = 'Connected';
-                connectBtn.disabled = true;
-                disconnectBtn.disabled = false;
-                connectedTime = Date.now();
-                hideError();
-            });
-
-            socket.on('disconnect', () => {
-                statusEl.className = 'status disconnected';
-                statusTextEl.textContent = 'Disconnected';
-                connectBtn.disabled = false;
-                disconnectBtn.disabled = true;
-                connectedTime = null;
-            });
-
-            socket.on('reconnecting', (attempt) => {
-                statusEl.className = 'status reconnecting';
-                statusTextEl.textContent = `Reconnecting... (attempt ${attempt})`;
-            });
-
-            socket.on('ticker', (data) => {
-                updatePrice(data);
-            });
-
-            socket.on('error', (error) => {
-                showError(error.message || 'Unknown error');
-            });
-        }
-
-        // Disconnect
-        function disconnect() {
-            if (socket) {
-                socket.disconnect();
-                socket = null;
-            }
-        }
-
-        // Subscribe to products
-        function subscribe() {
-            const products = productsInput.value.split(',').map(p => p.trim()).filter(p => p);
-            if (products.length === 0) {
-                showError('Please enter at least one product');
-                return;
-            }
-
-            if (!socket || !socket.connected) {
-                showError('Not connected');
-                return;
-            }
-
-            socket.emit('subscribe', {
-                channels: ['ticker', 'heartbeat'],
-                product_ids: products
-            });
-
-            hideError();
-        }
-
-        // Update price data
-        function updatePrice(ticker) {
-            prices[ticker.product_id] = ticker;
-            updateCount++;
-            renderTable();
-            updateStats();
-        }
-
-        // Render price table
-        function renderTable() {
-            const rows = Object.values(prices).map(ticker => {
-                const price = parseFloat(ticker.price);
-                const open = parseFloat(ticker.open_24h);
-                const change = ((price - open) / open * 100).toFixed(2);
-                const isUp = price >= open;
-
-                return `
-                    <tr>
-                        <td><strong>${ticker.product_id}</strong></td>
-                        <td class="price ${isUp ? 'up' : 'down'}">
-                            $${parseFloat(ticker.price).toLocaleString()}
-                        </td>
-                        <td class="change ${isUp ? 'up' : 'down'}">
-                            ${isUp ? '+' : ''}${change}%
-                        </td>
-                        <td>$${parseFloat(ticker.high_24h).toLocaleString()}</td>
-                        <td>$${parseFloat(ticker.low_24h).toLocaleString()}</td>
-                        <td>${parseFloat(ticker.volume_24h).toFixed(2)}</td>
-                        <td>$${parseFloat(ticker.best_bid).toLocaleString()}</td>
-                        <td>$${parseFloat(ticker.best_ask).toLocaleString()}</td>
-                        <td>${new Date(ticker.time).toLocaleTimeString()}</td>
-                    </tr>
-                `;
-            }).join('');
-
-            priceTableBody.innerHTML = rows || '<tr><td colspan="9" style="text-align:center;">No data</td></tr>';
-        }
-
-        // Update stats
-        function updateStats() {
-            updateCountEl.textContent = updateCount;
-            productCountEl.textContent = Object.keys(prices).length;
-
-            if (connectedTime) {
-                const uptime = Math.floor((Date.now() - connectedTime) / 1000);
-                uptimeEl.textContent = `${uptime}s`;
-            }
-        }
-
-        // Clear data
-        function clearData() {
-            prices = {};
-            updateCount = 0;
-            renderTable();
-            updateStats();
-        }
-
-        // Error handling
-        function showError(message) {
-            errorEl.textContent = `Error: ${message}`;
-            errorEl.style.display = 'block';
-        }
-
-        function hideError() {
-            errorEl.style.display = 'none';
-        }
-
-        // Event listeners
-        connectBtn.addEventListener('click', connect);
-        disconnectBtn.addEventListener('click', disconnect);
-        clearBtn.addEventListener('click', clearData);
-        subscribeBtn.addEventListener('click', subscribe);
-
-        productsInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') subscribe();
+        // Connection status
+        socket.on('connect', () => {
+            document.getElementById('status').className = 'status connected';
+            document.getElementById('status').textContent = 'Connected to server';
         });
 
-        // Update uptime every second
-        setInterval(updateStats, 1000);
+        socket.on('disconnect', () => {
+            document.getElementById('status').className = 'status disconnected';
+            document.getElementById('status').textContent = 'Disconnected from server';
+        });
+
+        // Coinbase connection status
+        socket.on('coinbase_connected', () => {
+            document.getElementById('coinbase-status').className = 'status connected';
+            document.getElementById('coinbase-status').textContent = 'Connected to Coinbase';
+        });
+
+        socket.on('coinbase_disconnected', () => {
+            document.getElementById('coinbase-status').className = 'status disconnected';
+            document.getElementById('coinbase-status').textContent = 'Disconnected from Coinbase';
+        });
+
+        socket.on('coinbase_reconnecting', (data) => {
+            document.getElementById('coinbase-status').className = 'status disconnected';
+            document.getElementById('coinbase-status').textContent = `Reconnecting to Coinbase... (attempt ${data.attempt})`;
+        });
+
+        // Receive available pairs
+        socket.on('available_pairs', (pairs) => {
+            availablePairs = pairs;
+            document.getElementById('available-count').textContent = pairs.length;
+            console.log(`${pairs.length} USD pairs available`);
+        });
+
+        // Receive subscribed products
+        socket.on('subscribed_products', (products) => {
+            subscribedPairs = products;
+            document.getElementById('subscribed-count').textContent = products.length;
+        });
+
+        // Subscribe to all USD pairs
+        function subscribeToAll() {
+            socket.emit('subscribe', { type: 'all' });
+            console.log('Subscribing to all USD pairs...');
+            document.getElementById('tickers').innerHTML = '<div class="loading">Loading all USD pairs...</div>';
+        }
+
+        // Subscribe to popular pairs only
+        function subscribeToPopular() {
+            socket.emit('subscribe', { type: 'popular' });
+            console.log('Subscribing to popular pairs...');
+            document.getElementById('tickers').innerHTML = '<div class="loading">Loading popular pairs...</div>';
+        }
+
+        // Unsubscribe from all
+        function unsubscribeAll() {
+            socket.emit('unsubscribe', { products: Object.keys(tickers) });
+            console.log('Unsubscribing from all pairs...');
+
+            // Clear ticker display
+            document.getElementById('tickers').innerHTML = '<div class="loading">Unsubscribed</div>';
+            Object.keys(tickers).forEach(key => delete tickers[key]);
+            document.getElementById('active-count').textContent = '0';
+        }
+
+        // Handle ticker updates
+        socket.on('ticker', (data) => {
+            tickers[data.product_id] = data;
+            updateTickerDisplay();
+        });
+
+        // Handle errors
+        socket.on('error', (error) => {
+            console.error('WebSocket error:', error);
+        });
+
+        // Filter tickers based on search
+        function filterTickers() {
+            searchFilter = document.getElementById('search').value.toLowerCase();
+            updateTickerDisplay();
+        }
+
+        // Sort tickers
+        function sortTickers() {
+            currentSort = document.getElementById('sort-select').value;
+            updateTickerDisplay();
+        }
+
+        // Update ticker display
+        function updateTickerDisplay() {
+            const container = document.getElementById('tickers');
+
+            // Filter tickers
+            let filteredTickers = Object.values(tickers).filter(ticker => {
+                if (!searchFilter) return true;
+                return ticker.product_id.toLowerCase().includes(searchFilter);
+            });
+
+            // Sort tickers
+            filteredTickers.sort((a, b) => {
+                switch (currentSort) {
+                    case 'name':
+                        return a.product_id.localeCompare(b.product_id);
+                    case 'price':
+                        return parseFloat(b.price) - parseFloat(a.price);
+                    case 'change':
+                        const changeA = ((parseFloat(a.price) - parseFloat(a.open_24h)) / parseFloat(a.open_24h)) * 100;
+                        const changeB = ((parseFloat(b.price) - parseFloat(b.open_24h)) / parseFloat(b.open_24h)) * 100;
+                        return changeB - changeA;
+                    case 'volume':
+                        return parseFloat(b.volume_24h) - parseFloat(a.volume_24h);
+                    default:
+                        return 0;
+                }
+            });
+
+            // Update active count
+            document.getElementById('active-count').textContent = Object.keys(tickers).length;
+
+            // Clear and rebuild display
+            container.innerHTML = '';
+
+            if (filteredTickers.length === 0 && Object.keys(tickers).length > 0) {
+                container.innerHTML = '<div class="loading">No matches found</div>';
+                return;
+            }
+
+            filteredTickers.forEach(ticker => {
+                const priceChange = parseFloat(ticker.price) - parseFloat(ticker.open_24h);
+                const priceChangePercent = (priceChange / parseFloat(ticker.open_24h) * 100).toFixed(2);
+                const isPositive = priceChange >= 0;
+
+                const card = document.createElement('div');
+                card.className = 'ticker-card';
+                card.innerHTML = `
+                    <div class="ticker-header">${ticker.product_id}</div>
+                    <div class="ticker-price ${isPositive ? 'positive' : 'negative'}">
+                        $${parseFloat(ticker.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 })}
+                    </div>
+                    <div class="ticker-info">
+                        <div>
+                            <strong>24h Change:</strong><br>
+                            <span class="${isPositive ? 'positive' : 'negative'}">
+                                ${isPositive ? '+' : ''}${priceChangePercent}%
+                            </span>
+                        </div>
+                        <div>
+                            <strong>24h Volume:</strong><br>
+                            ${parseFloat(ticker.volume_24h).toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                        </div>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        // Auto-subscribe to popular pairs on connection
+        socket.on('connect', () => {
+            setTimeout(() => {
+                subscribeToPopular();
+            }, 1000);
+        });
     </script>
 </body>
 

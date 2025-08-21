@@ -7,6 +7,7 @@ import path from "path";
 import dotenv from "dotenv";
 import { CoinbaseWebSocket } from "./websocket/CoinbaseWebSocket";
 import { TickerMessage } from "./types/coinbase";
+import { CoinbaseApiClient } from "./utils/coinbaseApiClient";
 
 // Load environment variables
 dotenv.config();
@@ -25,29 +26,37 @@ app.use(express.static(path.join(__dirname, "../public")));
 
 // Coinbase WebSocket instance
 let coinbaseWS: CoinbaseWebSocket | null = null;
+const apiClient = new CoinbaseApiClient();
 
 // Track connected clients and their subscriptions
 const clients = new Map<string, Set<string>>();
 
-// Initialize Coinbase WebSocket
-function initializeCoinbaseWebSocket() {
-  const config: any = {
-    channels: ["ticker", "heartbeat"],
-    productIds: [], // Will be populated by client subscriptions
-  };
+// Store all available USD pairs
+let allUSDPairs: string[] = [];
+let subscribedPairs: Set<string> = new Set();
 
-  // Add authentication if environment variables are set
-  if (process.env.COINBASE_API_KEY && process.env.COINBASE_API_SECRET) {
-    config.auth = {
-      apiKey: process.env.COINBASE_API_KEY,
-      apiSecret: process.env.COINBASE_API_SECRET,
-    };
-    console.log("Using authenticated Coinbase WebSocket connection");
-  } else {
-    console.log("Using unauthenticated Coinbase WebSocket connection");
+// Maximum number of simultaneous subscriptions (to avoid overwhelming the connection)
+const MAX_SUBSCRIPTIONS = 100;
+
+// Initialize and connect to Coinbase WebSocket
+async function initializeCoinbaseWebSocket() {
+  console.log("Initializing Coinbase WebSocket connection...");
+
+  // Fetch all USD pairs first
+  console.log("Fetching all USD trading pairs...");
+  allUSDPairs = await apiClient.getActiveUSDPairs();
+
+  if (allUSDPairs.length === 0) {
+    console.log("Failed to fetch pairs, using popular pairs as fallback");
+    allUSDPairs = apiClient.getPopularUSDPairs();
   }
 
-  coinbaseWS = new CoinbaseWebSocket(config);
+  console.log(`Total available USD pairs: ${allUSDPairs.length}`);
+
+  coinbaseWS = new CoinbaseWebSocket({
+    channels: ["ticker", "heartbeats"],
+    productIds: [], // Start with empty, will subscribe based on client needs
+  });
 
   // Forward ticker updates to all connected clients
   coinbaseWS.on("ticker", (ticker: TickerMessage) => {
@@ -58,6 +67,9 @@ function initializeCoinbaseWebSocket() {
   coinbaseWS.on("connected", () => {
     console.log("Connected to Coinbase WebSocket");
     io.emit("coinbase_connected");
+
+    // Send available pairs to all clients
+    io.emit("available_pairs", allUSDPairs);
   });
 
   coinbaseWS.on("disconnected", (data) => {
@@ -79,98 +91,140 @@ function initializeCoinbaseWebSocket() {
   coinbaseWS.connect();
 }
 
+// Subscribe to a batch of products
+function subscribeToProducts(products: string[]) {
+  if (!coinbaseWS || coinbaseWS.getConnectionState() !== "CONNECTED") {
+    console.log("WebSocket not connected, skipping subscription");
+    return;
+  }
+
+  // Filter out already subscribed products
+  const newProducts = products.filter((p) => !subscribedPairs.has(p));
+
+  if (newProducts.length === 0) {
+    return;
+  }
+
+  // Check if we're within limits
+  const totalAfterSubscribe = subscribedPairs.size + newProducts.length;
+  if (totalAfterSubscribe > MAX_SUBSCRIPTIONS) {
+    const availableSlots = MAX_SUBSCRIPTIONS - subscribedPairs.size;
+    if (availableSlots > 0) {
+      newProducts.splice(availableSlots);
+      console.log(
+        `Limiting subscription to ${availableSlots} products due to MAX_SUBSCRIPTIONS limit`
+      );
+    } else {
+      console.log(`Already at maximum subscriptions (${MAX_SUBSCRIPTIONS})`);
+      return;
+    }
+  }
+
+  console.log(`Subscribing to ${newProducts.length} new products`);
+  coinbaseWS.subscribe("ticker", newProducts);
+
+  // Track subscribed pairs
+  newProducts.forEach((p) => subscribedPairs.add(p));
+}
+
 // Socket.io connection handling
 io.on("connection", (socket) => {
   console.log(`Client connected: ${socket.id}`);
   clients.set(socket.id, new Set());
 
-  // Initialize Coinbase connection if this is the first client
-  if (clients.size === 1 && !coinbaseWS) {
-    initializeCoinbaseWebSocket();
+  // Send current connection status and available pairs
+  if (coinbaseWS && coinbaseWS.getConnectionState() === "CONNECTED") {
+    socket.emit("coinbase_connected");
+    socket.emit("available_pairs", allUSDPairs);
   }
 
   // Handle subscription requests
-  socket.on(
-    "subscribe",
-    (data: { channels: string[]; product_ids: string[] }) => {
-      console.log(`Client ${socket.id} subscribing to:`, data.product_ids);
+  socket.on("subscribe", (data: { type: string; products?: string[] }) => {
+    const clientProducts = clients.get(socket.id)!;
 
-      const clientProducts = clients.get(socket.id)!;
-      data.product_ids.forEach((product) => clientProducts.add(product));
+    if (data.type === "all") {
+      // Subscribe to all USD pairs (up to limit)
+      console.log(`Client ${socket.id} requesting all USD pairs`);
+      const pairsToSubscribe = allUSDPairs.slice(0, MAX_SUBSCRIPTIONS);
 
-      // Subscribe to each channel separately as per Coinbase docs
-      if (coinbaseWS) {
-        for (const channel of data.channels) {
-          coinbaseWS.subscribe(channel, data.product_ids);
-        }
-      }
+      pairsToSubscribe.forEach((product) => clientProducts.add(product));
+      subscribeToProducts(pairsToSubscribe);
+
+      socket.emit("subscribed_products", Array.from(subscribedPairs));
+    } else if (data.type === "popular") {
+      // Subscribe to popular pairs only
+      const popularPairs = apiClient.getPopularUSDPairs();
+      console.log(
+        `Client ${socket.id} subscribing to ${popularPairs.length} popular pairs`
+      );
+
+      popularPairs.forEach((product) => clientProducts.add(product));
+      subscribeToProducts(popularPairs);
+
+      socket.emit("subscribed_products", Array.from(subscribedPairs));
+    } else if (data.type === "custom" && data.products) {
+      // Subscribe to specific products
+      console.log(`Client ${socket.id} subscribing to:`, data.products);
+
+      data.products.forEach((product) => clientProducts.add(product));
+      subscribeToProducts(data.products);
+
+      socket.emit("subscribed_products", Array.from(subscribedPairs));
     }
-  );
+  });
 
   // Handle unsubscribe requests
-  socket.on(
-    "unsubscribe",
-    (data: { channels: string[]; product_ids: string[] }) => {
-      console.log(`Client ${socket.id} unsubscribing from:`, data.product_ids);
+  socket.on("unsubscribe", (data: { products: string[] }) => {
+    console.log(`Client ${socket.id} unsubscribing from:`, data.products);
 
-      const clientProducts = clients.get(socket.id)!;
-      data.product_ids.forEach((product) => clientProducts.delete(product));
+    const clientProducts = clients.get(socket.id)!;
+    data.products.forEach((product) => clientProducts.delete(product));
 
-      // Check if any other clients are subscribed to these products
-      const stillNeeded = data.product_ids.filter((product) => {
-        for (const [clientId, products] of clients) {
-          if (clientId !== socket.id && products.has(product)) {
-            return true;
-          }
-        }
-        return false;
-      });
-
-      // Unsubscribe from products no longer needed
-      const toUnsubscribe = data.product_ids.filter(
-        (p) => !stillNeeded.includes(p)
-      );
-      if (toUnsubscribe.length > 0 && coinbaseWS) {
-        for (const channel of data.channels) {
-          coinbaseWS.unsubscribe(channel, toUnsubscribe);
+    // Check if any other clients are subscribed to these products
+    const stillNeeded = data.products.filter((product) => {
+      for (const [clientId, products] of clients) {
+        if (clientId !== socket.id && products.has(product)) {
+          return true;
         }
       }
+      return false;
+    });
+
+    // Unsubscribe from products no longer needed
+    const toUnsubscribe = data.products.filter((p) => !stillNeeded.includes(p));
+
+    if (toUnsubscribe.length > 0 && coinbaseWS) {
+      coinbaseWS.unsubscribe("ticker", toUnsubscribe);
+      toUnsubscribe.forEach((p) => subscribedPairs.delete(p));
     }
-  );
+  });
 
   // Handle disconnect
   socket.on("disconnect", () => {
     console.log(`Client disconnected: ${socket.id}`);
 
-    // Get products this client was subscribed to
     const clientProducts = clients.get(socket.id) || new Set();
     clients.delete(socket.id);
 
-    // If no clients left, disconnect from Coinbase
-    if (clients.size === 0 && coinbaseWS) {
-      console.log("No clients connected, disconnecting from Coinbase");
-      coinbaseWS.disconnect();
-      coinbaseWS = null;
-    } else {
-      // Check if we need to unsubscribe from any products
-      const productsToCheck = Array.from(clientProducts);
-      const stillNeeded = productsToCheck.filter((product) => {
-        for (const products of clients.values()) {
-          if (products.has(product)) return true;
-        }
-        return false;
-      });
-
-      const toUnsubscribe = productsToCheck.filter(
-        (p) => !stillNeeded.includes(p)
-      );
-      if (toUnsubscribe.length > 0 && coinbaseWS) {
-        // Unsubscribe from all active channels for these products
-        const channels = coinbaseWS.getSubscribedChannels();
-        for (const channel of channels) {
-          coinbaseWS.unsubscribe(channel, toUnsubscribe);
-        }
+    // Check if we need to unsubscribe from any products
+    const productsToCheck = Array.from(clientProducts);
+    const stillNeeded = productsToCheck.filter((product) => {
+      for (const products of clients.values()) {
+        if (products.has(product)) return true;
       }
+      return false;
+    });
+
+    const toUnsubscribe = productsToCheck.filter(
+      (p) => !stillNeeded.includes(p)
+    );
+
+    if (toUnsubscribe.length > 0 && coinbaseWS) {
+      coinbaseWS.unsubscribe("ticker", toUnsubscribe);
+      toUnsubscribe.forEach((p) => subscribedPairs.delete(p));
+      console.log(
+        `Unsubscribed from ${toUnsubscribe.length} products after client disconnect`
+      );
     }
   });
 });
@@ -181,7 +235,18 @@ app.get("/health", (req, res) => {
     status: "ok",
     coinbase_connected: coinbaseWS?.getConnectionState() === "CONNECTED",
     active_clients: clients.size,
+    subscribed_pairs: subscribedPairs.size,
+    available_pairs: allUSDPairs.length,
     timestamp: new Date().toISOString(),
+  });
+});
+
+// API endpoint to get all available pairs
+app.get("/api/pairs", (req, res) => {
+  res.json({
+    all: allUSDPairs,
+    subscribed: Array.from(subscribedPairs),
+    popular: apiClient.getPopularUSDPairs(),
   });
 });
 
@@ -189,4 +254,21 @@ app.get("/health", (req, res) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
+
+  // Initialize Coinbase WebSocket connection immediately when server starts
+  initializeCoinbaseWebSocket();
+});
+
+// Graceful shutdown
+process.on("SIGINT", () => {
+  console.log("\nShutting down gracefully...");
+
+  if (coinbaseWS) {
+    coinbaseWS.disconnect();
+  }
+
+  server.close(() => {
+    console.log("Server closed");
+    process.exit(0);
+  });
 });

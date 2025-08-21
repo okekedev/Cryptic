@@ -1,98 +1,99 @@
+// src/utils/jwtGenerator.ts
+
 import { sign } from "jsonwebtoken";
-import crypto from "crypto";
+import * as crypto from "crypto";
 
 export interface JWTConfig {
-  apiKey: string; 
-  apiSecret: string; 
+  apiKey: string; // organizations/{org_id}/apiKeys/{key_id}
+  apiSecret: string; // EC private key with newlines
 }
 
-
 export function generateJWT(config: JWTConfig): string {
-  const algorithm = "ES256";
-
   const payload = {
     iss: "cdp",
     nbf: Math.floor(Date.now() / 1000),
-    exp: Math.floor(Date.now() / 1000) + 120, // 2 minutes
+    exp: Math.floor(Date.now() / 1000) + 120, // Expires in 2 minutes
     sub: config.apiKey,
   };
 
   const headers = {
     kid: config.apiKey,
     typ: "JWT",
+    alg: "ES256",
     nonce: crypto.randomBytes(16).toString("hex"),
   };
 
   try {
+    // The sign function expects (payload, secretOrPrivateKey, options)
     return sign(payload, config.apiSecret, {
-      algorithm,
+      algorithm: "ES256",
       header: headers,
     });
   } catch (error) {
-    throw new Error(`Failed to generate JWT: ${error.message}`);
+    throw new Error(`Failed to generate JWT: ${(error as Error).message}`);
   }
 }
 
 /**
  * JWT Manager to handle automatic regeneration
+ * Regenerates JWT before expiration
  */
 export class JWTManager {
-  private jwt: string | null = null;
-  private jwtExpiry: number = 0;
+  private config: JWTConfig;
+  private currentJWT: string | null = null;
   private regenerateTimer: NodeJS.Timeout | null = null;
+  private onNewJWT: ((jwt: string) => void) | null = null;
 
-  constructor(private config: JWTConfig) {}
-
-  /**
-   * Get a valid JWT, regenerating if necessary
-   */
-  public getJWT(): string {
-    const now = Date.now() / 1000;
-
-    // Regenerate if expired or about to expire (30 seconds buffer)
-    if (!this.jwt || now >= this.jwtExpiry - 30) {
-      this.regenerate();
-    }
-
-    return this.jwt!;
+  constructor(config: JWTConfig) {
+    this.config = config;
   }
 
-  /**
-   * Start automatic JWT regeneration
-   */
-  public startAutoRegeneration(): void {
-    this.stopAutoRegeneration();
-
-    // Regenerate every 90 seconds (JWT lasts 2 minutes, so we have buffer)
-    this.regenerateTimer = setInterval(() => {
-      this.regenerate();
-    }, 90000);
-
-    // Generate initial JWT
+  public start(callback: (jwt: string) => void): void {
+    this.onNewJWT = callback;
     this.regenerate();
   }
 
-  /**
-   * Stop automatic JWT regeneration
-   */
-  public stopAutoRegeneration(): void {
+  public stop(): void {
     if (this.regenerateTimer) {
-      clearInterval(this.regenerateTimer);
+      clearTimeout(this.regenerateTimer);
       this.regenerateTimer = null;
     }
+    this.currentJWT = null;
+    this.onNewJWT = null;
+  }
+
+  public getCurrentJWT(): string | null {
+    return this.currentJWT;
   }
 
   private regenerate(): void {
     try {
-      this.jwt = generateJWT(this.config);
-      this.jwtExpiry = Math.floor(Date.now() / 1000) + 120;
-      console.log(
-        "JWT regenerated, expires at:",
-        new Date(this.jwtExpiry * 1000).toISOString()
-      );
+      this.currentJWT = generateJWT(this.config);
+
+      if (this.onNewJWT) {
+        this.onNewJWT(this.currentJWT);
+      }
+
+      // Schedule next regeneration 10 seconds before expiration (110 seconds)
+      this.regenerateTimer = setTimeout(() => {
+        this.regenerate();
+      }, 110000);
     } catch (error) {
       console.error("Failed to regenerate JWT:", error);
-      throw error;
+      // Retry in 5 seconds on failure
+      this.regenerateTimer = setTimeout(() => {
+        this.regenerate();
+      }, 5000);
     }
   }
+}
+
+/**
+ * Helper function to add JWT to WebSocket messages
+ */
+export function addJWTToMessage(message: any, jwt: string): any {
+  return {
+    ...message,
+    jwt: jwt,
+  };
 }

@@ -1,166 +1,212 @@
-// src/websocket/CoinbaseWebSocket.ts
-
 import { EventEmitter } from "events";
-import { WebSocketConnection, ConnectionState } from "./WebSocketConnection";
-import {
-  CoinbaseWebSocketMessage,
-  SubscriptionMessage,
-  TickerMessage,
-  Level2Update,
-  HeartbeatMessage,
-  ErrorMessage,
-} from "../types/coinbase";
+import WebSocket from "ws";
 
-export interface CoinbaseConfig {
-  channels: string[];
-  productIds: string[];
-  auth?: {
-    apiKey: string; // organizations/{org_id}/apiKeys/{key_id}
-    apiSecret: string; // EC private key with newlines
-  };
+export type ConnectionState =
+  | "DISCONNECTED"
+  | "CONNECTING"
+  | "CONNECTED"
+  | "RECONNECTING";
+
+export interface WebSocketConfig {
+  url: string;
+  reconnect?: boolean;
+  reconnectInterval?: number;
+  maxReconnectAttempts?: number;
+  pingInterval?: number;
 }
 
-export class CoinbaseWebSocket extends EventEmitter {
-  private connection: WebSocketConnection;
-  private sequenceNumbers: Map<string, number> = new Map();
-  private config: CoinbaseConfig;
-  private messageBuffer: CoinbaseWebSocketMessage[] = [];
-  private isProcessing = false;
+export class WebSocketConnection extends EventEmitter {
+  private ws: WebSocket | null = null;
+  private config: WebSocketConfig;
+  private state: ConnectionState = "DISCONNECTED";
+  private reconnectAttempts = 0;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private pingTimer: NodeJS.Timeout | null = null;
+  private shouldReconnect = true;
 
-  constructor(config: CoinbaseConfig) {
+  constructor(config: WebSocketConfig) {
     super();
-    this.config = config;
-
-    const wsUrl = "wss://advanced-trade-ws.coinbase.com";
-
-    this.connection = new WebSocketConnection({
-      url: wsUrl,
+    this.config = {
       reconnect: true,
       reconnectInterval: 1000,
-      maxReconnectAttempts: 10,
+      maxReconnectAttempts: Infinity,
       pingInterval: 30000,
-    });
-
-    this.setupEventHandlers();
+      ...config,
+    };
   }
 
   public connect(): void {
-    this.connection.connect();
+    if (this.state === "CONNECTED" || this.state === "CONNECTING") {
+      return;
+    }
+
+    this.shouldReconnect = true;
+    this.state = "CONNECTING";
+    this.emit("connecting");
+
+    try {
+      this.ws = new WebSocket(this.config.url);
+      this.setupEventHandlers();
+    } catch (error) {
+      this.handleError(error);
+    }
   }
 
   public disconnect(): void {
-    this.connection.disconnect();
-  }
+    this.shouldReconnect = false;
+    this.clearTimers();
 
-  public subscribe(channels: string[], productIds: string[]): void {
-    const subscribeMessage: SubscriptionMessage = {
-      type: "subscribe",
-      channels: channels,
-      product_ids: productIds,
-    };
+    if (this.ws) {
+      this.ws.removeAllListeners();
 
-    if (this.config.auth) {
-      // Add authentication if provided
-      // Implementation depends on Coinbase auth requirements
+      if (this.ws.readyState === WebSocket.OPEN) {
+        this.ws.close(1000, "Normal closure");
+      } else {
+        this.ws.terminate();
+      }
+
+      this.ws = null;
     }
 
-    this.connection.send(subscribeMessage);
+    this.state = "DISCONNECTED";
+    this.emit("disconnected", { reason: "User requested disconnect" });
   }
 
-  public unsubscribe(channels: string[], productIds: string[]): void {
-    const unsubscribeMessage: SubscriptionMessage = {
-      type: "unsubscribe",
-      channels: channels,
-      product_ids: productIds,
-    };
+  public send(data: any): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error("WebSocket is not connected");
+    }
 
-    this.connection.send(unsubscribeMessage);
+    const message = typeof data === "string" ? data : JSON.stringify(data);
+    this.ws.send(message);
+  }
+
+  public getState(): ConnectionState {
+    return this.state;
   }
 
   private setupEventHandlers(): void {
-    this.connection.on("connected", () => {
+    if (!this.ws) return;
+
+    this.ws.on("open", () => {
+      this.state = "CONNECTED";
+      this.reconnectAttempts = 0;
       this.emit("connected");
-      // Auto-subscribe to configured channels
-      if (this.config.channels.length && this.config.productIds.length) {
-        this.subscribe(this.config.channels, this.config.productIds);
-      }
+      this.startPing();
     });
 
-    this.connection.on("disconnected", (data) => {
-      this.emit("disconnected", data);
-    });
-
-    this.connection.on("error", (error) => {
-      this.emit("error", error);
-    });
-
-    this.connection.on("message", (message: CoinbaseWebSocketMessage) => {
-      this.handleMessage(message);
-    });
-
-    this.connection.on("reconnecting", (data) => {
-      this.emit("reconnecting", data);
-    });
-  }
-
-  private handleMessage(message: CoinbaseWebSocketMessage): void {
-    // Check sequence number if present
-    if (message.sequence && message.product_id) {
-      const lastSequence = this.sequenceNumbers.get(message.product_id) || 0;
-
-      if (message.sequence <= lastSequence) {
-        // Old message, ignore
-        return;
-      }
-
-      if (message.sequence > lastSequence + 1) {
-        // Gap detected
-        this.emit("sequence_gap", {
-          product_id: message.product_id,
-          expected: lastSequence + 1,
-          received: message.sequence,
-        });
-      }
-
-      this.sequenceNumbers.set(message.product_id, message.sequence);
-    }
-
-    // Route message by type
-    switch (message.type) {
-      case "ticker":
-        this.emit("ticker", message as TickerMessage);
-        break;
-
-      case "l2update":
-        this.emit("l2update", message as Level2Update);
-        break;
-
-      case "heartbeat":
-        this.emit("heartbeat", message as HeartbeatMessage);
-        break;
-
-      case "error":
-        this.emit("error", new Error((message as ErrorMessage).message));
-        break;
-
-      case "subscriptions":
-        this.emit("subscriptions", message);
-        break;
-
-      default:
+    this.ws.on("message", (data: WebSocket.Data) => {
+      try {
+        const message = JSON.parse(data.toString());
         this.emit("message", message);
+      } catch (error) {
+        // If not JSON, emit raw message
+        this.emit("raw_message", data.toString());
+      }
+    });
+
+    this.ws.on("error", (error: Error) => {
+      this.handleError(error);
+    });
+
+    this.ws.on("close", (code: number, reason: string) => {
+      this.handleClose(code, reason);
+    });
+
+    this.ws.on("pong", () => {
+      // Keep-alive received
+      this.emit("pong");
+    });
+  }
+
+  private handleError(error: any): void {
+    this.emit("error", error);
+
+    // Don't try to reconnect if we're already disconnecting
+    if (!this.shouldReconnect) {
+      return;
     }
 
-    // Also emit raw message for any listeners
-    this.emit("raw_message", message);
+    // WebSocket errors often lead to close events
+    // Let the close handler deal with reconnection
   }
 
-  public getConnectionState(): ConnectionState {
-    return this.connection.getState();
+  private handleClose(code: number, reason: string): void {
+    this.clearTimers();
+
+    const wasConnected = this.state === "CONNECTED";
+    this.state = "DISCONNECTED";
+
+    this.emit("disconnected", { code, reason });
+
+    // Attempt reconnection if enabled and not manually disconnected
+    if (
+      this.shouldReconnect &&
+      this.config.reconnect &&
+      this.reconnectAttempts < (this.config.maxReconnectAttempts || Infinity)
+    ) {
+      this.scheduleReconnect();
+    } else if (
+      this.reconnectAttempts >= (this.config.maxReconnectAttempts || Infinity)
+    ) {
+      this.emit("max_reconnect_attempts_reached");
+    }
   }
 
-  // Get all tracked products
-  public getTrackedProducts(): string[] {
-    return Array.from(this.sequenceNumbers.keys());
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer) {
+      return;
+    }
+
+    this.state = "RECONNECTING";
+    this.reconnectAttempts++;
+
+    const delay = this.getReconnectDelay();
+
+    this.emit("reconnecting", {
+      attempt: this.reconnectAttempts,
+      delay,
+      maxAttempts: this.config.maxReconnectAttempts,
+    });
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
+    }, delay);
+  }
+
+  private getReconnectDelay(): number {
+    // Exponential backoff with jitter
+    const baseDelay = this.config.reconnectInterval || 1000;
+    const exponentialDelay = Math.min(
+      baseDelay * Math.pow(2, this.reconnectAttempts - 1),
+      30000
+    );
+    const jitter = Math.random() * 0.3 * exponentialDelay; // 30% jitter
+    return exponentialDelay + jitter;
+  }
+
+  private startPing(): void {
+    if (!this.config.pingInterval || this.pingTimer) {
+      return;
+    }
+
+    this.pingTimer = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.ping();
+      }
+    }, this.config.pingInterval);
+  }
+
+  private clearTimers(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
   }
 }
