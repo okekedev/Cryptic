@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Prices - Real Time</title>
+    <style>
+        body {
+            font-family: "Times New Roman", Times, serif;
+            margin: 20px;
+            background: white;
+            color: black;
+            line-height: 1.4;
+        }
+
+        h1 {
+            font-size: 24px;
+            margin-bottom: 10px;
+            color: #0000EE;
+        }
+
+        .status {
+            font-size: 14px;
+            margin-bottom: 20px;
+            padding: 5px;
+            background: #f0f0f0;
+            border: 1px solid #ccc;
+        }
+
+        .connected {
+            background: #d4ffd4;
+        }
+
+        .disconnected {
+            background: #ffd4d4;
+        }
+
+        .reconnecting {
+            background: #ffffd4;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            font-size: 14px;
+        }
+
+        th,
+        td {
+            text-align: left;
+            padding: 4px 8px;
+            border: 1px solid #ccc;
+        }
+
+        th {
+            background: #e0e0e0;
+            font-weight: bold;
+        }
+
+        tr:hover {
+            background: #f5f5f5;
+        }
+
+        .price {
+            font-weight: bold;
+        }
+
+        .up {
+            color: green;
+        }
+
+        .down {
+            color: red;
+        }
+
+        .change {
+            font-size: 12px;
+        }
+
+        .controls {
+            margin: 20px 0;
+        }
+
+        button {
+            padding: 5px 10px;
+            margin-right: 10px;
+            font-family: inherit;
+        }
+
+        input[type="text"] {
+            padding: 4px;
+            width: 300px;
+            font-family: inherit;
+        }
+
+        .info {
+            font-size: 12px;
+            color: #666;
+            margin-top: 20px;
+        }
+
+        .error {
+            color: red;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Crypto Price Monitor</h1>
+
+    <div id="status" class="status disconnected">
+        Status: <span id="connection-status">Disconnected</span>
+    </div>
+
+    <div class="controls">
+        <button id="connect-btn">Connect</button>
+        <button id="disconnect-btn" disabled>Disconnect</button>
+        <button id="clear-btn">Clear</button>
+        <br><br>
+        <label>Products (comma separated): </label>
+        <input type="text" id="products" value="BTC-USD,ETH-USD,SOL-USD" />
+        <button id="subscribe-btn">Subscribe</button>
+    </div>
+
+    <div id="error" class="error" style="display:none;"></div>
+
+    <table id="price-table">
+        <thead>
+            <tr>
+                <th>Product</th>
+                <th>Price</th>
+                <th>24h Change</th>
+                <th>24h High</th>
+                <th>24h Low</th>
+                <th>24h Volume</th>
+                <th>Bid</th>
+                <th>Ask</th>
+                <th>Last Update</th>
+            </tr>
+        </thead>
+        <tbody id="price-tbody">
+            <tr>
+                <td colspan="9" style="text-align:center; color:#666;">
+                    No data - Click Connect to start
+                </td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="info">
+        <p>Updates: <span id="update-count">0</span> |
+            Active Products: <span id="product-count">0</span> |
+            Uptime: <span id="uptime">0s</span></p>
+        <p>Simple real-time crypto price monitor. No frills, just data.</p>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        // State
+        let socket = null;
+        let prices = {};
+        let updateCount = 0;
+        let connectedTime = null;
+
+        // Elements
+        const statusEl = document.getElementById('status');
+        const statusTextEl = document.getElementById('connection-status');
+        const connectBtn = document.getElementById('connect-btn');
+        const disconnectBtn = document.getElementById('disconnect-btn');
+        const clearBtn = document.getElementById('clear-btn');
+        const subscribeBtn = document.getElementById('subscribe-btn');
+        const productsInput = document.getElementById('products');
+        const priceTableBody = document.getElementById('price-tbody');
+        const errorEl = document.getElementById('error');
+        const updateCountEl = document.getElementById('update-count');
+        const productCountEl = document.getElementById('product-count');
+        const uptimeEl = document.getElementById('uptime');
+
+        // Connect to server
+        function connect() {
+            socket = io();
+
+            socket.on('connect', () => {
+                statusEl.className = 'status connected';
+                statusTextEl.textContent = 'Connected';
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+                connectedTime = Date.now();
+                hideError();
+            });
+
+            socket.on('disconnect', () => {
+                statusEl.className = 'status disconnected';
+                statusTextEl.textContent = 'Disconnected';
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                connectedTime = null;
+            });
+
+            socket.on('reconnecting', (attempt) => {
+                statusEl.className = 'status reconnecting';
+                statusTextEl.textContent = `Reconnecting... (attempt ${attempt})`;
+            });
+
+            socket.on('ticker', (data) => {
+                updatePrice(data);
+            });
+
+            socket.on('error', (error) => {
+                showError(error.message || 'Unknown error');
+            });
+        }
+
+        // Disconnect
+        function disconnect() {
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+            }
+        }
+
+        // Subscribe to products
+        function subscribe() {
+            const products = productsInput.value.split(',').map(p => p.trim()).filter(p => p);
+            if (products.length === 0) {
+                showError('Please enter at least one product');
+                return;
+            }
+
+            if (!socket || !socket.connected) {
+                showError('Not connected');
+                return;
+            }
+
+            socket.emit('subscribe', {
+                channels: ['ticker', 'heartbeat'],
+                product_ids: products
+            });
+
+            hideError();
+        }
+
+        // Update price data
+        function updatePrice(ticker) {
+            prices[ticker.product_id] = ticker;
+            updateCount++;
+            renderTable();
+            updateStats();
+        }
+
+        // Render price table
+        function renderTable() {
+            const rows = Object.values(prices).map(ticker => {
+                const price = parseFloat(ticker.price);
+                const open = parseFloat(ticker.open_24h);
+                const change = ((price - open) / open * 100).toFixed(2);
+                const isUp = price >= open;
+
+                return `
+                    <tr>
+                        <td><strong>${ticker.product_id}</strong></td>
+                        <td class="price ${isUp ? 'up' : 'down'}">
+                            $${parseFloat(ticker.price).toLocaleString()}
+                        </td>
+                        <td class="change ${isUp ? 'up' : 'down'}">
+                            ${isUp ? '+' : ''}${change}%
+                        </td>
+                        <td>$${parseFloat(ticker.high_24h).toLocaleString()}</td>
+                        <td>$${parseFloat(ticker.low_24h).toLocaleString()}</td>
+                        <td>${parseFloat(ticker.volume_24h).toFixed(2)}</td>
+                        <td>$${parseFloat(ticker.best_bid).toLocaleString()}</td>
+                        <td>$${parseFloat(ticker.best_ask).toLocaleString()}</td>
+                        <td>${new Date(ticker.time).toLocaleTimeString()}</td>
+                    </tr>
+                `;
+            }).join('');
+
+            priceTableBody.innerHTML = rows || '<tr><td colspan="9" style="text-align:center;">No data</td></tr>';
+        }
+
+        // Update stats
+        function updateStats() {
+            updateCountEl.textContent = updateCount;
+            productCountEl.textContent = Object.keys(prices).length;
+
+            if (connectedTime) {
+                const uptime = Math.floor((Date.now() - connectedTime) / 1000);
+                uptimeEl.textContent = `${uptime}s`;
+            }
+        }
+
+        // Clear data
+        function clearData() {
+            prices = {};
+            updateCount = 0;
+            renderTable();
+            updateStats();
+        }
+
+        // Error handling
+        function showError(message) {
+            errorEl.textContent = `Error: ${message}`;
+            errorEl.style.display = 'block';
+        }
+
+        function hideError() {
+            errorEl.style.display = 'none';
+        }
+
+        // Event listeners
+        connectBtn.addEventListener('click', connect);
+        disconnectBtn.addEventListener('click', disconnect);
+        clearBtn.addEventListener('click', clearData);
+        subscribeBtn.addEventListener('click', subscribe);
+
+        productsInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') subscribe();
+        });
+
+        // Update uptime every second
+        setInterval(updateStats, 1000);
+    </script>
+</body>
+
+</html>
