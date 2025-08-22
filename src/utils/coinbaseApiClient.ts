@@ -6,59 +6,81 @@ export interface CoinbaseProduct {
   id: string;
   base_currency: string;
   quote_currency: string;
+  base_min_size: string;
+  base_max_size: string;
   quote_increment: string;
   base_increment: string;
   display_name: string;
   min_market_funds: string;
+  max_market_funds: string;
   margin_enabled: boolean;
+  fx_stablecoin: boolean;
+  max_slippage_percentage: string;
   post_only: boolean;
   limit_only: boolean;
   cancel_only: boolean;
+  trading_disabled: boolean;
   status: string;
   status_message: string;
-  trading_disabled: boolean;
-  fx_stablecoin: boolean;
-  max_slippage_percentage: string;
   auction_mode: boolean;
-  high_bid_limit_percentage: string;
 }
 
 export class CoinbaseApiClient {
-  private readonly baseUrl = "api.coinbase.com";
+  private readonly baseUrl = "api.exchange.coinbase.com";
 
   /**
    * Fetch all available trading products from Coinbase
    */
   public async getAllProducts(): Promise<CoinbaseProduct[]> {
     return new Promise((resolve, reject) => {
+      console.log(`   - Making HTTPS request to ${this.baseUrl}/products`);
+
       const options = {
         hostname: this.baseUrl,
-        path: "/api/v3/brokerage/products",
+        path: "/products",
         method: "GET",
         headers: {
           "Content-Type": "application/json",
+          "User-Agent": "CryptoTradingBot/1.0",
         },
       };
 
       const req = https.request(options, (res) => {
+        console.log(`   - Response status: ${res.statusCode}`);
         let data = "";
 
         res.on("data", (chunk) => {
           data += chunk;
+          console.log(`   - Received chunk: ${chunk.length} bytes`);
         });
 
         res.on("end", () => {
+          console.log(`   - Total response size: ${data.length} bytes`);
           try {
             const response = JSON.parse(data);
-            resolve(response.products || []);
+            // The exchange API returns an array directly, not wrapped in an object
+            const products = Array.isArray(response) ? response : [];
+            console.log(
+              `   - Parsed ${products.length} products from response`
+            );
+            resolve(products);
           } catch (error) {
+            console.error(`   - Parse error:`, error);
+            console.log(`   - Response preview: ${data.substring(0, 200)}...`);
             reject(new Error(`Failed to parse response: ${error}`));
           }
         });
       });
 
       req.on("error", (error) => {
+        console.error(`   - Request error:`, error);
         reject(error);
+      });
+
+      req.setTimeout(10000, () => {
+        console.error("   - Request timeout after 10 seconds");
+        req.abort();
+        reject(new Error("Request timeout"));
       });
 
       req.end();
@@ -78,8 +100,7 @@ export class CoinbaseApiClient {
           (product) =>
             product.quote_currency === "USD" &&
             product.status === "online" &&
-            !product.trading_disabled &&
-            !product.limit_only // Skip limit-only products as they might have less activity
+            !product.trading_disabled
         )
         .map((product) => product.id)
         .sort();

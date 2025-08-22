@@ -85,9 +85,29 @@
             color: white;
         }
 
-        .unsubscribe-btn {
-            background-color: #FF9800;
+        .refresh-btn {
+            background-color: #9C27B0;
             color: white;
+        }
+
+        .refresh-btn:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        .rotating {
+            animation: rotate 1s linear infinite;
+        }
+
+        @keyframes rotate {
+            from {
+                transform: rotate(0deg);
+            }
+
+            to {
+                transform: rotate(360deg);
+            }
         }
 
         .search-box {
@@ -208,6 +228,9 @@
             <button class="subscribe-all-btn" onclick="subscribeToAll()">Subscribe to All USD Pairs</button>
             <button class="subscribe-popular-btn" onclick="subscribeToPopular()">Popular Pairs Only</button>
             <button class="unsubscribe-btn" onclick="unsubscribeAll()">Unsubscribe All</button>
+            <button class="refresh-btn" onclick="refreshPairs()" title="Refresh available pairs from Coinbase API">
+                <span id="refresh-icon">🔄</span> Refresh Pairs
+            </button>
             <input type="text" class="search-box" id="search" placeholder="Search pairs (e.g. BTC, ETH)..."
                 oninput="filterTickers()">
             <div class="sort-controls">
@@ -309,6 +332,34 @@
         socket.on('error', (error) => {
             console.error('WebSocket error:', error);
         });
+
+        // Refresh pairs from API
+        async function refreshPairs() {
+            const refreshBtn = document.querySelector('.refresh-btn');
+            const refreshIcon = document.getElementById('refresh-icon');
+
+            refreshBtn.disabled = true;
+            refreshIcon.classList.add('rotating');
+
+            try {
+                const response = await fetch('/api/pairs/refresh', { method: 'POST' });
+                const data = await response.json();
+
+                if (data.success) {
+                    console.log(`Refreshed pairs: ${data.pairs} pairs loaded`);
+                    // The server will emit 'available_pairs' automatically
+                } else {
+                    console.error('Failed to refresh pairs:', data.error);
+                    alert('Failed to refresh pairs: ' + data.error);
+                }
+            } catch (error) {
+                console.error('Error refreshing pairs:', error);
+                alert('Error refreshing pairs. Check console for details.');
+            } finally {
+                refreshBtn.disabled = false;
+                refreshIcon.classList.remove('rotating');
+            }
+        }
 
         // Filter tickers based on search
         function filterTickers() {
