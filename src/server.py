@@ -164,11 +164,21 @@ websocket_clients = set()  # Track connected clients
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     websocket_clients.add(websocket)
+    
+    data = {pid: {**data, 'timestamp': data['timestamp'].isoformat()} for pid, data in last_logged_items()}
+    if data: 
+        await websocket.send_text(json.dumps(data))
+        logging.debug("Sent initial data to new client.")
+    else:
+        logging.debug("No data available yet for initial send to new client")
+        
     try:
         while True:
-            await websocket.receive_text()  # Keep connection open
+            client_message = await websocket.receive_text()
+            logging.debug(f"Received message from client: {client_message}")
     except WebSocketDisconnect:
         websocket_clients.remove(websocket)
+        logging.info("Client disconnected from /ws")
 
 async def broadcast_update():
     """
