@@ -1,0 +1,57 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="refresh" content="5">  <!-- Auto-refresh every 5 seconds -->
+    <title>Crypto Monitor</title>
+    <style>
+        body { font-family: arial, sans-serif; background-color: #fff; color: #000; margin: 20px; }
+        h1 { font-size: 18pt; color: #000; }
+        table { width: 100%; border-collapse: collapse; border: 1px solid #ccc; }
+        th, td { padding: 8px; text-align: left; border: 1px solid #ccc; }
+        th { background-color: #eee; font-weight: bold; }
+        .positive { color: green; }
+        .negative { color: red; }
+        a { color: #00f; text-decoration: underline; }
+        .footer { font-size: 10pt; color: #999; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Crypto Prices - Real-Time from Coinbase</h1>
+    <table>
+        <tr>
+            <th>Product</th>
+            <th>Live Price</th>
+            <th>24hr High</th>
+            <th>24hr Low</th>
+            <th>24hr Volume</th>
+            <th>24hr % Change</th>
+            <th>Last Updated</th>
+        </tr>
+        
+        <tr>
+            <td>BTC-USD</td>
+            <td>$110636.33</td>
+            <td>$111081.81</td>
+            <td>$108670</td>
+            <td>8603.07483758 BTC</td>
+            <td class="negative">-0.05%</td>
+            <td>2025-08-26T19:13:05.967689+00:00</td>
+        </tr>
+        
+        <tr>
+            <td>ETH-USD</td>
+            <td>$4541.57</td>
+            <td>$4579.9</td>
+            <td>$4311.68</td>
+            <td>260448.89301904 ETH</td>
+            <td class="positive">2.78%</td>
+            <td>2025-08-26T19:13:05.865013+00:00</td>
+        </tr>
+        
+    </table>
+    <div class="footer">Data via Coinbase WebSocket. <a href="https://www.coinbase.com">More info</a></div>
+</body>
+</html>

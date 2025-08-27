@@ -1,5 +1,4 @@
-.env
-node_modules/
-cache/
-data/
-.last-pair-update.json
+/config/.env
+__pycache__/
+*.pyc
+logs/

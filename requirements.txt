@@ -1,0 +1,4 @@
+websockets>=12.0
+pyyaml>=6.0.2  # If you add YAML config loading later; optional for now
+fastapi>=0.115.2
+uvicorn>=0.32.0

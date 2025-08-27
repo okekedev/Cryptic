@@ -1,0 +1,7 @@
+products:
+  - BTC-USD
+  - ETH-USD
+channels:
+  - heartbeat
+  - status
+  # Add more as needed
