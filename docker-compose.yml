@@ -1,0 +1,39 @@
+version: "3.8"
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+    networks:
+      - app-network
+    restart: always
+    depends_on:
+      - monitoring-bot
+      - trading-bot
+
+  monitoring-bot:
+    build: ./bots/monitoring
+    env_file:
+      - .env
+    networks:
+      - app-network
+    restart: always
+
+  trading-bot:
+    build: ./bots/trading
+    env_file:
+      - .env
+    networks:
+      - app-network
+    restart: always
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  data:

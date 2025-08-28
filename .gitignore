@@ -1,4 +1,7 @@
-/config/.env
+node_modules/
 __pycache__/
+.env
+data/*
 *.pyc
-logs/
+*.pyo
+*.db
