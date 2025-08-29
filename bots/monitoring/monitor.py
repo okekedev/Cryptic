@@ -12,9 +12,9 @@ CRYPTOS = os.getenv('MONITORING_CRYPTOS', 'BTC-USD,ETH-USD').split(',')
 THRESHOLD = float(os.getenv('VOLUME_THRESHOLD', 1.5))
 WINDOW_MINUTES = int(os.getenv('WINDOW_MINUTES', 5))
 WINDOW_SECONDS = WINDOW_MINUTES * 60
-BACKEND_URL = 'http://backend:3000/alert'  # Container network
+BACKEND_URL = 'http://backend:3000/alert' 
 WS_URL = 'wss://ws-feed.exchange.coinbase.com'
-EXCHANGE = ccxt.coinbasepro()  # Public for fetch_trades
+EXCHANGE = ccxt.coinbase()
 
 # Data structures: per crypto, deque of (timestamp, volume) for windows
 volume_windows = {crypto: deque() for crypto in CRYPTOS}
@@ -29,20 +29,36 @@ def fetch_historical_volume(crypto):
         window_start = time.time() - 3600
         num_windows = 0
         for trade in trades:
-            ts = trade['timestamp'] / 1000  # to seconds
+            ts = trade.get('timestamp')  # to seconds
+            if ts is None or not isinstance(ts, (int, float, str)):
+                print(f"Skipping trade with invalid timestamp for {crypto}")
+                continue
+            
+            if isinstance(ts, str):
+                ts = float(ts)
+            elif isinstance(ts, (int, float)):
+                ts = float(ts)
+            ts /= 1000
             if ts >= window_start + WINDOW_SECONDS:
                 if window_vol > 0:
                     historical_avgs[crypto] += window_vol
-                    num_windows += 1
+                    num_windows += 1    
                 window_vol = 0.0
                 window_start += WINDOW_SECONDS
-            window_vol += trade['amount']
+                
+            amount = trade.get('amount')
+            if amount is not None and isinstance(amount, (int, float, str)):
+                if isinstance(amount, str):
+                    amount = float(amount)
+                window_vol += float(amount)
+            else: print(f"Skipping trade with invalid amount for {crypto}")
+            continue
         if num_windows > 0:
             historical_avgs[crypto] /= num_windows
         print(f"Initial avg volume for {crypto}: {historical_avgs[crypto]}")
     except Exception as e:
         print(f"Error fetching historical for {crypto}: {e}")
-        historical_avgs[crypto] = 1.0  # Fallback
+        historical_avgs[crypto] = 1.0
 
 def on_open(ws):
     """Subscribe to matches channel for cryptos."""
