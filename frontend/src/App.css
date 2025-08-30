@@ -1,38 +1,185 @@
 .App {
   text-align: center;
-}
-
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
+  min-height: 100vh;
+  background-color: #0a0e27;
+  color: white;
 }
 
 .App-header {
-  background-color: #282c34;
+  padding: 20px;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
   font-size: calc(10px + 2vmin);
-  color: white;
 }
 
-.App-link {
-  color: #61dafb;
+h1 {
+  margin-bottom: 20px;
+  background: linear-gradient(90deg, #00d4ff, #0099ff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
-@keyframes App-logo-spin {
+.connection-status {
+  font-size: 16px;
+  margin-bottom: 30px;
+  padding: 10px 20px;
+  background-color: rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+}
+
+.connected {
+  color: #4caf50;
+}
+
+.disconnected {
+  color: #f44336;
+}
+
+.alerts-container {
+  width: 100%;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.alerts-container h2 {
+  font-size: 24px;
+  margin-bottom: 20px;
+  color: #00d4ff;
+}
+
+.no-alerts {
+  font-size: 18px;
+  color: #666;
+  font-style: italic;
+}
+
+.alerts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  max-height: 600px;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.alert-item {
+  background: linear-gradient(
+    135deg,
+    rgba(0, 212, 255, 0.1),
+    rgba(0, 153, 255, 0.1)
+  );
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  border-radius: 10px;
+  padding: 20px;
+  text-align: left;
+  animation: slideIn 0.3s ease-out;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.alert-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 20px rgba(0, 212, 255, 0.3);
+}
+
+@keyframes slideIn {
   from {
-    transform: rotate(0deg);
+    opacity: 0;
+    transform: translateX(-20px);
   }
   to {
-    transform: rotate(360deg);
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.alert-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.crypto-name {
+  font-size: 20px;
+  font-weight: bold;
+  color: #00d4ff;
+}
+
+.timestamp {
+  font-size: 14px;
+  color: #888;
+}
+
+.alert-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  font-size: 16px;
+}
+
+.volume-info {
+  display: flex;
+  justify-content: space-between;
+  padding: 5px 0;
+}
+
+.volume-ratio {
+  grid-column: 1 / -1;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.label {
+  color: #888;
+  font-size: 14px;
+}
+
+.value {
+  font-weight: bold;
+  color: #fff;
+}
+
+.ratio {
+  color: #4caf50;
+  font-size: 18px;
+}
+
+/* Scrollbar styling */
+.alerts-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.alerts-list::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+.alerts-list::-webkit-scrollbar-thumb {
+  background: rgba(0, 212, 255, 0.5);
+  border-radius: 4px;
+}
+
+.alerts-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 212, 255, 0.7);
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .alerts-container {
+    padding: 0 20px;
+  }
+
+  .alert-body {
+    grid-template-columns: 1fr;
+  }
+
+  .alert-item {
+    padding: 15px;
   }
 }
