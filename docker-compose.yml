@@ -1,5 +1,17 @@
 version: "3.8"
 services:
+  frontend:
+    build:
+      context: ./frontend
+      target: production
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - app-network
+    restart: always
+
   backend:
     build: ./backend
     ports:

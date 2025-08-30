@@ -1,17 +1,22 @@
+# Simple backend Dockerfile without frontend build steps
+
+# Use Node.js Alpine image for smaller size
 FROM node:20-alpine
 
+# Set working directory
 WORKDIR /app
 
+# Copy package files
 COPY package*.json ./
+
+# Install dependencies
 RUN npm install
 
+# Copy application code
 COPY . .
 
-WORKDIR /app/frontend
-RUN npm install --legacy-peer-deps && npm run build || (echo "Frontend build failed, check logs" && exit 1)
-WORKDIR /app
-RUN cp -r frontend/build ./public || echo "Failed to copy build"
-
+# Expose port 3000
 EXPOSE 3000
 
+# Start the application
 CMD ["node", "src/index.js"]
