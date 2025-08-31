@@ -40,8 +40,9 @@ h1 {
 
 .alerts-container {
   width: 100%;
-  max-width: 800px;
+  max-width: 1200px;
   margin: 0 auto;
+  padding: 0 20px;
 }
 
 .alerts-container h2 {
@@ -56,43 +57,47 @@ h1 {
   font-style: italic;
 }
 
-.alerts-list {
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-  max-height: 600px;
-  overflow-y: auto;
+/* Grid layout for cards */
+.alerts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 20px;
   padding: 10px;
 }
 
-.alert-item {
+/* Card styles */
+.alert-card {
   background: linear-gradient(
     135deg,
     rgba(0, 212, 255, 0.1),
     rgba(0, 153, 255, 0.1)
   );
   border: 1px solid rgba(0, 212, 255, 0.3);
-  border-radius: 10px;
+  border-radius: 15px;
   padding: 20px;
   text-align: left;
-  animation: slideIn 0.3s ease-out;
-  transition: transform 0.2s, box-shadow 0.2s;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.2s, box-shadow 0.2s, border-color 0.3s;
+  animation: cardPulse 0.5s ease-out;
 }
 
-.alert-item:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 5px 20px rgba(0, 212, 255, 0.3);
+/* Pulse animation when card updates */
+@keyframes cardPulse {
+  0% {
+    border-color: rgba(0, 255, 136, 0.8);
+    box-shadow: 0 0 30px rgba(0, 255, 136, 0.4);
+  }
+  100% {
+    border-color: rgba(0, 212, 255, 0.3);
+    box-shadow: none;
+  }
 }
 
-@keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateX(-20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+.alert-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 10px 30px rgba(0, 212, 255, 0.3);
+  border-color: rgba(0, 212, 255, 0.5);
 }
 
 .alert-header {
@@ -105,9 +110,10 @@ h1 {
 }
 
 .crypto-name {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: bold;
   color: #00d4ff;
+  text-transform: uppercase;
 }
 
 .timestamp {
@@ -116,8 +122,8 @@ h1 {
 }
 
 .alert-body {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   font-size: 16px;
 }
@@ -125,61 +131,84 @@ h1 {
 .volume-info {
   display: flex;
   justify-content: space-between;
-  padding: 5px 0;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.volume-info:last-child {
+  border-bottom: none;
 }
 
 .volume-ratio {
-  grid-column: 1 / -1;
-  margin-top: 10px;
-  padding-top: 10px;
+  margin-top: 15px;
+  padding-top: 15px;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
+  text-align: center;
 }
 
 .label {
   color: #888;
   font-size: 14px;
+  font-weight: 600;
 }
 
 .value {
   font-weight: bold;
   color: #fff;
+  font-size: 16px;
 }
 
 .ratio {
   color: #4caf50;
-  font-size: 18px;
+  font-size: 20px;
+  font-weight: bold;
 }
 
-/* Scrollbar styling */
-.alerts-list::-webkit-scrollbar {
-  width: 8px;
+/* Update indicator */
+.update-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #00ff88, #00d4ff);
+  animation: slideIndicator 2s ease-out;
+  opacity: 0;
 }
 
-.alerts-list::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
-}
-
-.alerts-list::-webkit-scrollbar-thumb {
-  background: rgba(0, 212, 255, 0.5);
-  border-radius: 4px;
-}
-
-.alerts-list::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 212, 255, 0.7);
+@keyframes slideIndicator {
+  0% {
+    transform: translateX(-100%);
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(0);
+    opacity: 0;
+  }
 }
 
 /* Responsive design */
 @media (max-width: 768px) {
-  .alerts-container {
-    padding: 0 20px;
-  }
-
-  .alert-body {
+  .alerts-grid {
     grid-template-columns: 1fr;
+    padding: 0;
   }
 
-  .alert-item {
+  .alert-card {
     padding: 15px;
+  }
+
+  .crypto-name {
+    font-size: 18px;
+  }
+
+  .value {
+    font-size: 14px;
+  }
+}
+
+@media (min-width: 1400px) {
+  .alerts-grid {
+    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
   }
 }

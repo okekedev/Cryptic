@@ -5,7 +5,7 @@ import "./App.css";
 function App() {
   const [socket, setSocket] = useState(null);
   const [connected, setConnected] = useState(false);
-  const [tradeAlerts, setTradeAlerts] = useState([]);
+  const [cryptoAlerts, setCryptoAlerts] = useState({});
 
   useEffect(() => {
     // Connect to the backend WebSocket
@@ -29,15 +29,15 @@ function App() {
     newSocket.on("trade_update", (data) => {
       console.log("Received trade update:", data);
 
-      // Add timestamp to the alert
-      const alertWithTime = {
-        ...data,
-        timestamp: new Date().toLocaleTimeString(),
-        id: Date.now(), // Simple ID for React key
-      };
-
-      // Add new alert to the beginning of the array
-      setTradeAlerts((prev) => [alertWithTime, ...prev].slice(0, 50)); // Keep last 50 alerts
+      // Update the specific crypto card instead of adding to a list
+      setCryptoAlerts((prev) => ({
+        ...prev,
+        [data.crypto]: {
+          ...data,
+          timestamp: new Date().toLocaleTimeString(),
+          lastUpdate: Date.now(),
+        },
+      }));
     });
 
     setSocket(newSocket);
@@ -47,6 +47,12 @@ function App() {
       newSocket.close();
     };
   }, []);
+
+  // Convert object to array for rendering
+  const alertsArray = Object.values(cryptoAlerts).sort((a, b) => {
+    // Sort by most recent update first
+    return b.lastUpdate - a.lastUpdate;
+  });
 
   return (
     <div className="App">
@@ -61,14 +67,14 @@ function App() {
         </div>
 
         <div className="alerts-container">
-          <h2>Volume Alerts</h2>
+          <h2>Live Volume Alerts</h2>
 
-          {tradeAlerts.length === 0 ? (
+          {alertsArray.length === 0 ? (
             <p className="no-alerts">Waiting for alerts...</p>
           ) : (
-            <div className="alerts-list">
-              {tradeAlerts.map((alert) => (
-                <div key={alert.id} className="alert-item">
+            <div className="alerts-grid">
+              {alertsArray.map((alert) => (
+                <div key={alert.crypto} className="alert-card">
                   <div className="alert-header">
                     <span className="crypto-name">{alert.crypto}</span>
                     <span className="timestamp">{alert.timestamp}</span>
@@ -98,6 +104,7 @@ function App() {
                       </span>
                     </div>
                   </div>
+                  <div className="update-indicator"></div>
                 </div>
               ))}
             </div>
