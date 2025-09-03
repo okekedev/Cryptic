@@ -5,9 +5,8 @@ import "./App.css";
 function App() {
   const [socket, setSocket] = useState(null);
   const [connected, setConnected] = useState(false);
-  const [exchangeConnected, setExchangeConnected] = useState(false);
-  const [cryptoAlerts, setCryptoAlerts] = useState({});
-  const [volumeStats, setVolumeStats] = useState({});
+  const [cryptoTickers, setCryptoTickers] = useState({});
+  const [volumeAlerts, setVolumeAlerts] = useState([]);
 
   useEffect(() => {
     // Connect to the backend WebSocket
@@ -19,48 +18,30 @@ function App() {
     newSocket.on("connect", () => {
       console.log("Connected to WebSocket");
       setConnected(true);
-      // Request current status when connected
-      newSocket.emit("get_status");
     });
 
     newSocket.on("disconnect", () => {
       console.log("Disconnected from WebSocket");
       setConnected(false);
-      setExchangeConnected(false);
     });
 
-    // Listen for exchange connection status
-    newSocket.on("exchange_connected", (data) => {
-      console.log("Exchange connected:", data);
-      setExchangeConnected(true);
-    });
+    // Listen for ticker updates from the backend
+    newSocket.on("ticker_update", (data) => {
+      console.log("Received ticker update:", data);
 
-    newSocket.on("exchange_disconnected", (data) => {
-      console.log("Exchange disconnected:", data);
-      setExchangeConnected(false);
-    });
-
-    // Listen for status updates
-    newSocket.on("status", (data) => {
-      console.log("Status update:", data);
-      if (data.volumeStats) {
-        setVolumeStats(data.volumeStats);
-      }
-    });
-
-    // Listen for trade updates from the backend
-    newSocket.on("trade_update", (data) => {
-      console.log("Received trade update:", data);
-
-      // Update the specific crypto card
-      setCryptoAlerts((prev) => ({
+      setCryptoTickers((prev) => ({
         ...prev,
         [data.crypto]: {
           ...data,
-          timestamp: new Date().toLocaleTimeString(),
           lastUpdate: Date.now(),
         },
       }));
+    });
+
+    // Optional: Still listen for volume alerts for monitoring
+    newSocket.on("volume_alert", (data) => {
+      console.log("Volume alert:", data);
+      setVolumeAlerts((prev) => [...prev.slice(-9), data]);
     });
 
     setSocket(newSocket);
@@ -72,105 +53,129 @@ function App() {
   }, []);
 
   // Convert object to array for rendering
-  const alertsArray = Object.values(cryptoAlerts).sort((a, b) => {
-    return b.lastUpdate - a.lastUpdate;
+  const tickersArray = Object.values(cryptoTickers).sort((a, b) => {
+    // Sort by crypto name for consistent ordering
+    return a.crypto.localeCompare(b.crypto);
   });
 
-  // Get volume stats for a crypto
-  const getVolumeInfo = (crypto) => {
-    const stats = volumeStats[crypto];
-    if (!stats) return null;
+  // Format price with appropriate decimal places
+  const formatPrice = (price) => {
+    if (price >= 1000) return price.toFixed(2);
+    if (price >= 1) return price.toFixed(4);
+    return price.toFixed(6);
+  };
 
-    return (
-      <div className="volume-info">
-        <span className="stat">
-          Current: {stats.currentVolume?.toFixed(2) || "0"}
-        </span>
-        <span className="stat">
-          Avg: {stats.averageVolume?.toFixed(2) || "0"}
-        </span>
-        <span className="stat">
-          Ratio: {stats.surgeRatio?.toFixed(2) || "0"}x
-        </span>
-      </div>
-    );
+  // Format percentage
+  const formatPercent = (percent) => {
+    const formatted = percent.toFixed(2);
+    return percent >= 0 ? `+${formatted}%` : `${formatted}%`;
   };
 
   return (
     <div className="App">
       <header className="App-header">
-        <h1>Crypto Trading Alerts</h1>
+        <h1>Crypto Live Ticker</h1>
 
         <div className="connection-status">
-          <div>
-            Backend:{" "}
-            <span className={connected ? "connected" : "disconnected"}>
-              {connected ? "🟢 Connected" : "🔴 Disconnected"}
-            </span>
-          </div>
-          <div>
-            Exchange:{" "}
-            <span className={exchangeConnected ? "connected" : "disconnected"}>
-              {exchangeConnected ? "🟢 Connected" : "🔴 Disconnected"}
-            </span>
-          </div>
+          Status:{" "}
+          <span className={connected ? "connected" : "disconnected"}>
+            {connected ? "🟢 Connected" : "🔴 Disconnected"}
+          </span>
         </div>
 
         <div className="alerts-container">
-          <h2>Live Volume Alerts</h2>
+          <h2>Live Market Data</h2>
 
-          {alertsArray.length === 0 ? (
-            <div className="no-alerts">
-              <p>Monitoring for volume surges...</p>
-              <p className="monitoring-info">
-                Watching: {Object.keys(volumeStats).join(", ") || "Loading..."}
-              </p>
-            </div>
+          {tickersArray.length === 0 ? (
+            <p className="no-alerts">Connecting to market data...</p>
           ) : (
             <div className="alerts-grid">
-              {alertsArray.map((alert) => (
-                <div key={alert.crypto} className="alert-card">
-                  <div className="alert-header">
-                    <h3>{alert.crypto}</h3>
-                    <span className="alert-time">{alert.timestamp}</span>
+              {tickersArray.map((ticker) => (
+                <div key={ticker.crypto} className="ticker-card">
+                  <div className="ticker-header">
+                    <span className="crypto-name">{ticker.crypto}</span>
+                    <span className="timestamp">{ticker.timestamp}</span>
                   </div>
 
-                  <div className="alert-body">
-                    <div className="surge-indicator">
-                      <span className="surge-label">
-                        Volume Surge Detected!
-                      </span>
-                      <span className="surge-ratio">
-                        {alert.surge_ratio?.toFixed(2) ||
-                          (alert.current_vol / alert.avg_vol).toFixed(2)}
-                        x
-                      </span>
+                  <div className="price-display">
+                    <div className="current-price">
+                      ${formatPrice(ticker.price)}
                     </div>
-
-                    <div className="volume-details">
-                      <div className="volume-item">
-                        <span className="label">Current Volume:</span>
-                        <span className="value">
-                          {alert.current_vol.toFixed(2)}
-                        </span>
-                      </div>
-                      <div className="volume-item">
-                        <span className="label">Average Volume:</span>
-                        <span className="value">
-                          {alert.avg_vol.toFixed(2)}
-                        </span>
-                      </div>
-                      <div className="volume-item">
-                        <span className="label">Threshold:</span>
-                        <span className="value">{alert.threshold}x</span>
-                      </div>
+                    <div
+                      className={`price-change ${
+                        ticker.price_change_24h >= 0 ? "positive" : "negative"
+                      }`}
+                    >
+                      <span className="change-amount">
+                        {ticker.price_change_24h >= 0 ? "▲" : "▼"} $
+                        {Math.abs(ticker.price_change_24h).toFixed(2)}
+                      </span>
+                      <span className="change-percent">
+                        ({formatPercent(ticker.price_change_percent_24h)})
+                      </span>
                     </div>
                   </div>
 
-                  {/* Show real-time volume stats if available */}
-                  {getVolumeInfo(alert.crypto)}
+                  <div className="ticker-body">
+                    <div className="ticker-row">
+                      <div className="ticker-item">
+                        <span className="label">Bid</span>
+                        <span className="value">
+                          ${formatPrice(ticker.bid)}
+                        </span>
+                      </div>
+                      <div className="ticker-item">
+                        <span className="label">Ask</span>
+                        <span className="value">
+                          ${formatPrice(ticker.ask)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="ticker-row">
+                      <div className="ticker-item">
+                        <span className="label">24h Low</span>
+                        <span className="value">
+                          ${formatPrice(ticker.low_24h)}
+                        </span>
+                      </div>
+                      <div className="ticker-item">
+                        <span className="label">24h High</span>
+                        <span className="value">
+                          ${formatPrice(ticker.high_24h)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="ticker-item full-width">
+                      <span className="label">24h Volume</span>
+                      <span className="value">
+                        {ticker.volume_24h?.toLocaleString()}{" "}
+                        {ticker.crypto.split("-")[0]}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="update-indicator"></div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Optional: Small section for volume alerts */}
+          {volumeAlerts.length > 0 && (
+            <div className="volume-alerts-section">
+              <h3>Recent Volume Alerts</h3>
+              <div className="volume-alerts-list">
+                {volumeAlerts.slice(-3).map((alert, index) => (
+                  <div key={index} className="volume-alert-mini">
+                    <span>{alert.crypto}</span>
+                    <span className="alert-ratio">
+                      {alert.ratio?.toFixed(2)}x surge
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
