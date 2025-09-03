@@ -28,7 +28,7 @@ function App() {
     // Listen for ticker updates from the backend
     newSocket.on("ticker_update", (data) => {
       console.log("Received ticker update:", data);
-
+      
       setCryptoTickers((prev) => ({
         ...prev,
         [data.crypto]: {
@@ -74,6 +74,8 @@ function App() {
   return (
     <div className="App">
       <header className="App-header">
+        <h1>Crypto Live Ticker</h1>
+
         <div className="connection-status">
           Status:{" "}
           <span className={connected ? "connected" : "disconnected"}>
@@ -94,19 +96,14 @@ function App() {
                     <span className="crypto-name">{ticker.crypto}</span>
                     <span className="timestamp">{ticker.timestamp}</span>
                   </div>
-
+                  
                   <div className="price-display">
                     <div className="current-price">
                       ${formatPrice(ticker.price)}
                     </div>
-                    <div
-                      className={`price-change ${
-                        ticker.price_change_24h >= 0 ? "positive" : "negative"
-                      }`}
-                    >
+                    <div className={`price-change ${ticker.price_change_24h >= 0 ? 'positive' : 'negative'}`}>
                       <span className="change-amount">
-                        {ticker.price_change_24h >= 0 ? "▲" : "▼"} $
-                        {Math.abs(ticker.price_change_24h).toFixed(2)}
+                        {ticker.price_change_24h >= 0 ? '▲' : '▼'} ${Math.abs(ticker.price_change_24h).toFixed(2)}
                       </span>
                       <span className="change-percent">
                         ({formatPercent(ticker.price_change_percent_24h)})
@@ -118,61 +115,34 @@ function App() {
                     <div className="ticker-row">
                       <div className="ticker-item">
                         <span className="label">Bid</span>
-                        <span className="value">
-                          ${formatPrice(ticker.bid)}
-                        </span>
+                        <span className="value">${formatPrice(ticker.bid)}</span>
                       </div>
                       <div className="ticker-item">
                         <span className="label">Ask</span>
-                        <span className="value">
-                          ${formatPrice(ticker.ask)}
-                        </span>
+                        <span className="value">${formatPrice(ticker.ask)}</span>
                       </div>
                     </div>
-
+                    
                     <div className="ticker-row">
                       <div className="ticker-item">
                         <span className="label">24h Low</span>
-                        <span className="value">
-                          ${formatPrice(ticker.low_24h)}
-                        </span>
+                        <span className="value">${formatPrice(ticker.low_24h)}</span>
                       </div>
                       <div className="ticker-item">
                         <span className="label">24h High</span>
-                        <span className="value">
-                          ${formatPrice(ticker.high_24h)}
-                        </span>
+                        <span className="value">${formatPrice(ticker.high_24h)}</span>
                       </div>
                     </div>
-
+                    
                     <div className="ticker-item full-width">
                       <span className="label">24h Volume</span>
-                      <span className="value">
-                        {ticker.volume_24h?.toLocaleString()}{" "}
-                        {ticker.crypto.split("-")[0]}
-                      </span>
+                      <span className="value">{ticker.volume_24h?.toLocaleString()} {ticker.crypto.split('-')[0]}</span>
                     </div>
                   </div>
-
+                  
                   <div className="update-indicator"></div>
                 </div>
               ))}
-            </div>
-          )}
-
-          {volumeAlerts.length > 0 && (
-            <div className="volume-alerts-section">
-              <h3>volume alerts</h3>
-              <div className="volume-alerts-list">
-                {volumeAlerts.slice(-3).map((alert, index) => (
-                  <div key={index} className="volume-alert-mini">
-                    <span>{alert.crypto}</span>
-                    <span className="alert-ratio">
-                      {alert.ratio?.toFixed(2)}x surge
-                    </span>
-                  </div>
-                ))}
-              </div>
             </div>
           )}
         </div>
