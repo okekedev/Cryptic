@@ -24,19 +24,33 @@ services:
       # WebSocket configuration
       - WS_URL=wss://ws-feed.exchange.coinbase.com
 
-      # Option 1: Use ALL USD pairs (343 pairs)
-      # - USE_ALL_USD_PAIRS=true
-
-      # Option 2: Use top N USD pairs
-      # - TOP_USD_PAIRS=50
-
-      # Option 3: Specify custom pairs (default)
-      - MONITORING_CRYPTOS=${MONITORING_CRYPTOS:-BTC-USD,ETH-USD,SOL-USD,DOGE-USD,XRP-USD}
+      # Monitor all USD pairs
+      - USE_ALL_USD_PAIRS=true
 
       # Volume monitoring settings
       - VOLUME_THRESHOLD=${VOLUME_THRESHOLD:-1.5}
       - WINDOW_MINUTES=${WINDOW_MINUTES:-5}
       - EMIT_RAW_TRADES=${EMIT_RAW_TRADES:-false}
+    networks:
+      - app-network
+    restart: always
+
+  # Price Spike Detection Bot
+  spike-detector:
+    build: ./bots/spike-detector
+    depends_on:
+      - backend
+    volumes:
+      - ./data:/app/data # Share data directory with backend for SQLite
+    env_file:
+      - .env
+    environment:
+      - BACKEND_URL=http://backend:3000
+      - PRICE_SPIKE_THRESHOLD=${PRICE_SPIKE_THRESHOLD:-5.0} # 5% spike threshold
+      - PRICE_WINDOW_MINUTES=${PRICE_WINDOW_MINUTES:-5} # 5 minute window
+      - WEBHOOK_URL=${WEBHOOK_URL:-} # Optional: Slack/Telegram/Discord
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DB_PATH=/app/data/spike_alerts.db # SQLite database path
     networks:
       - app-network
     restart: always

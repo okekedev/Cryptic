@@ -1,3 +1,0 @@
-ccxt
-websocket-client
-requests
