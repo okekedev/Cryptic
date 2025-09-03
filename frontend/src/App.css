@@ -1,214 +1,202 @@
 .App {
   text-align: center;
   min-height: 100vh;
-  background-color: #0a0e27;
-  color: white;
+  background-color: #0d1117;
+  color: #c9d1d9;
 }
 
 .App-header {
-  padding: 20px;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  font-size: calc(10px + 2vmin);
+  padding: 2rem;
 }
 
 h1 {
-  margin-bottom: 20px;
-  background: linear-gradient(90deg, #00d4ff, #0099ff);
+  font-size: 2.5rem;
+  margin-bottom: 2rem;
+  background: linear-gradient(45deg, #58a6ff, #1f6feb);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  background-clip: text;
 }
 
 .connection-status {
-  font-size: 16px;
-  margin-bottom: 30px;
-  padding: 10px 20px;
-  background-color: rgba(255, 255, 255, 0.1);
-  border-radius: 20px;
+  display: flex;
+  gap: 2rem;
+  justify-content: center;
+  margin-bottom: 2rem;
+  font-size: 1.1rem;
+}
+
+.connection-status > div {
+  padding: 0.5rem 1rem;
+  background: #161b22;
+  border-radius: 8px;
+  border: 1px solid #30363d;
 }
 
 .connected {
-  color: #4caf50;
+  color: #3fb950;
 }
 
 .disconnected {
-  color: #f44336;
+  color: #f85149;
 }
 
 .alerts-container {
-  width: 100%;
   max-width: 1200px;
   margin: 0 auto;
-  padding: 0 20px;
+  padding: 2rem;
 }
 
 .alerts-container h2 {
-  font-size: 24px;
-  margin-bottom: 20px;
-  color: #00d4ff;
+  font-size: 1.8rem;
+  margin-bottom: 2rem;
+  color: #58a6ff;
 }
 
 .no-alerts {
-  font-size: 18px;
-  color: #666;
-  font-style: italic;
+  padding: 3rem;
+  background: #161b22;
+  border-radius: 12px;
+  border: 1px solid #30363d;
 }
 
-/* Grid layout for cards */
+.no-alerts p {
+  margin: 0.5rem 0;
+  font-size: 1.2rem;
+}
+
+.monitoring-info {
+  color: #8b949e;
+  font-size: 1rem !important;
+}
+
 .alerts-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 20px;
-  padding: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+  gap: 1.5rem;
 }
 
-/* Card styles */
 .alert-card {
-  background: linear-gradient(
-    135deg,
-    rgba(0, 212, 255, 0.1),
-    rgba(0, 153, 255, 0.1)
-  );
-  border: 1px solid rgba(0, 212, 255, 0.3);
-  border-radius: 15px;
-  padding: 20px;
-  text-align: left;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 12px;
+  padding: 1.5rem;
+  transition: all 0.3s ease;
   position: relative;
   overflow: hidden;
-  transition: transform 0.2s, box-shadow 0.2s, border-color 0.3s;
-  animation: cardPulse 0.5s ease-out;
 }
 
-/* Pulse animation when card updates */
-@keyframes cardPulse {
-  0% {
-    border-color: rgba(0, 255, 136, 0.8);
-    box-shadow: 0 0 30px rgba(0, 255, 136, 0.4);
-  }
+.alert-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #f85149, #faa356);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
   100% {
-    border-color: rgba(0, 212, 255, 0.3);
-    box-shadow: none;
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
   }
 }
 
 .alert-card:hover {
-  transform: translateY(-5px);
-  box-shadow: 0 10px 30px rgba(0, 212, 255, 0.3);
-  border-color: rgba(0, 212, 255, 0.5);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  border-color: #58a6ff;
 }
 
 .alert-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 15px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  margin-bottom: 1rem;
 }
 
-.crypto-name {
-  font-size: 22px;
+.alert-header h3 {
+  margin: 0;
+  font-size: 1.4rem;
+  color: #58a6ff;
+}
+
+.alert-time {
+  font-size: 0.9rem;
+  color: #8b949e;
+}
+
+.surge-indicator {
+  background: #1f2937;
+  border-left: 4px solid #f85149;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  border-radius: 4px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.surge-label {
+  font-weight: 600;
+  color: #faa356;
+}
+
+.surge-ratio {
+  font-size: 1.5rem;
   font-weight: bold;
-  color: #00d4ff;
-  text-transform: uppercase;
+  color: #f85149;
 }
 
-.timestamp {
-  font-size: 14px;
-  color: #888;
-}
-
-.alert-body {
+.volume-details {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  font-size: 16px;
+  gap: 0.75rem;
+}
+
+.volume-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.5rem;
+  background: #0d1117;
+  border-radius: 4px;
+}
+
+.volume-item .label {
+  color: #8b949e;
+}
+
+.volume-item .value {
+  font-weight: 600;
+  color: #c9d1d9;
 }
 
 .volume-info {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #30363d;
   display: flex;
-  justify-content: space-between;
-  padding: 8px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  justify-content: space-around;
+  font-size: 0.9rem;
 }
 
-.volume-info:last-child {
-  border-bottom: none;
-}
-
-.volume-ratio {
-  margin-top: 15px;
-  padding-top: 15px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+.volume-info .stat {
   text-align: center;
+  color: #8b949e;
 }
 
-.label {
-  color: #888;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.value {
-  font-weight: bold;
-  color: #fff;
-  font-size: 16px;
-}
-
-.ratio {
-  color: #4caf50;
-  font-size: 20px;
-  font-weight: bold;
-}
-
-/* Update indicator */
-.update-indicator {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, #00ff88, #00d4ff);
-  animation: slideIndicator 2s ease-out;
-  opacity: 0;
-}
-
-@keyframes slideIndicator {
-  0% {
-    transform: translateX(-100%);
-    opacity: 1;
-  }
-  100% {
-    transform: translateX(0);
-    opacity: 0;
-  }
-}
-
-/* Responsive design */
+/* Responsive */
 @media (max-width: 768px) {
   .alerts-grid {
     grid-template-columns: 1fr;
-    padding: 0;
   }
 
-  .alert-card {
-    padding: 15px;
-  }
-
-  .crypto-name {
-    font-size: 18px;
-  }
-
-  .value {
-    font-size: 14px;
-  }
-}
-
-@media (min-width: 1400px) {
-  .alerts-grid {
-    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+  .connection-status {
+    flex-direction: column;
+    gap: 0.5rem;
   }
 }

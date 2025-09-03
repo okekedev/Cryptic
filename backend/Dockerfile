@@ -15,4 +15,4 @@ COPY src/ ./src/
 EXPOSE 3000
 
 # Run the application
-CMD ["node", "src/index.js"]2
+CMD ["node", "src/index.js"]
