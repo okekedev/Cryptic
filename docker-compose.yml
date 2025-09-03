@@ -20,21 +20,19 @@ services:
       - ./data:/app/data
     env_file:
       - .env
+    environment:
+      # WebSocket configuration
+      - WS_URL=wss://ws-feed.exchange.coinbase.com
+      - MONITORING_CRYPTOS=${MONITORING_CRYPTOS:-BTC-USD,ETH-USD}
+      - VOLUME_THRESHOLD=${VOLUME_THRESHOLD:-1.5}
+      - WINDOW_MINUTES=${WINDOW_MINUTES:-5}
+      - EMIT_RAW_TRADES=${EMIT_RAW_TRADES:-false}
     networks:
       - app-network
     restart: always
-    depends_on:
-      - monitoring-bot
-      - trading-bot
+    # Remove dependency on monitoring-bot since WebSocket is now integrated
 
-  monitoring-bot:
-    build: ./bots/monitoring
-    env_file:
-      - .env
-    networks:
-      - app-network
-    restart: always
-
+  # Optional: Keep trading bot if you still need it
   trading-bot:
     build: ./bots/trading
     env_file:
