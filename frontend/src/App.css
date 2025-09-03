@@ -1,289 +1,306 @@
+/* Craigslist-inspired minimal styling */
+body {
+  margin: 0;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 14px;
+  background-color: #ffffff;
+  color: #000000;
+}
+
 .App {
-  text-align: center;
-  min-height: 100vh;
-  background-color: #0a0e27;
-  color: white;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 10px;
 }
 
 .App-header {
-  padding: 20px;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  font-size: calc(10px + 2vmin);
+  padding: 0;
+  min-height: auto;
+  display: block;
+  font-size: 14px;
 }
 
 h1 {
-  margin-bottom: 20px;
-  background: linear-gradient(90deg, #00d4ff, #0099ff);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  font-size: 24px;
+  font-weight: normal;
+  margin: 10px 0;
+  color: #000000;
+  background: none;
+  -webkit-background-clip: unset;
+  -webkit-text-fill-color: unset;
+  background-clip: unset;
+}
+
+h2 {
+  font-size: 18px;
+  font-weight: normal;
+  margin: 15px 0 10px 0;
+  color: #000000;
 }
 
 .connection-status {
-  font-size: 16px;
-  margin-bottom: 30px;
-  padding: 10px 20px;
-  background-color: rgba(255, 255, 255, 0.1);
-  border-radius: 20px;
+  font-size: 12px;
+  margin-bottom: 15px;
+  padding: 0;
+  background-color: transparent;
+  border-radius: 0;
+  color: #666666;
 }
 
 .connected {
-  color: #4caf50;
+  color: #006600;
 }
 
 .disconnected {
-  color: #f44336;
+  color: #cc0000;
 }
 
 .alerts-container {
   width: 100%;
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0 20px;
+  max-width: none;
+  margin: 0;
+  padding: 0;
 }
 
 .alerts-container h2 {
-  font-size: 24px;
-  margin-bottom: 20px;
-  color: #00d4ff;
+  font-size: 18px;
+  margin-bottom: 10px;
+  color: #000000;
+  border-bottom: 1px solid #cccccc;
+  padding-bottom: 5px;
 }
 
 .no-alerts {
-  font-size: 18px;
-  color: #666;
-  font-style: italic;
+  font-size: 14px;
+  color: #666666;
+  font-style: normal;
+  margin: 20px 0;
 }
 
-/* Grid layout for ticker cards */
+/* Simple table-like layout */
 .alerts-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-  gap: 20px;
-  padding: 10px;
+  display: block;
+  padding: 0;
+  margin: 0;
 }
 
-/* Ticker card styles */
+/* Ticker cards styled like Craigslist listings */
 .ticker-card {
-  background: linear-gradient(
-    135deg,
-    rgba(0, 212, 255, 0.1),
-    rgba(0, 153, 255, 0.1)
-  );
-  border: 1px solid rgba(0, 212, 255, 0.3);
-  border-radius: 15px;
-  padding: 24px;
-  text-align: left;
+  background: #f5f5f5;
+  border: 1px solid #cccccc;
+  border-radius: 0;
+  padding: 10px;
+  margin-bottom: 10px;
   position: relative;
-  overflow: hidden;
-  transition: transform 0.2s, box-shadow 0.2s, border-color 0.3s;
-  animation: cardPulse 0.5s ease-out;
-}
-
-/* Pulse animation when card updates */
-@keyframes cardPulse {
-  0% {
-    border-color: rgba(0, 255, 136, 0.8);
-    box-shadow: 0 0 30px rgba(0, 255, 136, 0.4);
-  }
-  100% {
-    border-color: rgba(0, 212, 255, 0.3);
-    box-shadow: none;
-  }
+  transition: none;
+  animation: none;
 }
 
 .ticker-card:hover {
-  transform: translateY(-5px);
-  box-shadow: 0 10px 30px rgba(0, 212, 255, 0.3);
-  border-color: rgba(0, 212, 255, 0.5);
+  transform: none;
+  box-shadow: none;
+  border-color: #cccccc;
+  background-color: #eeeeee;
 }
 
 .ticker-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
-  padding-bottom: 15px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #dddddd;
 }
 
 .crypto-name {
-  font-size: 24px;
+  font-size: 16px;
   font-weight: bold;
-  color: #00d4ff;
+  color: #0000ee;
   text-transform: uppercase;
+  text-decoration: none;
 }
 
 .timestamp {
-  font-size: 12px;
-  color: #888;
+  font-size: 11px;
+  color: #666666;
 }
 
-/* Price display section */
+/* Price display - simple and functional */
 .price-display {
-  margin-bottom: 20px;
-  text-align: center;
+  margin-bottom: 10px;
+  text-align: left;
 }
 
 .current-price {
-  font-size: 36px;
+  font-size: 20px;
   font-weight: bold;
-  color: #ffffff;
-  margin-bottom: 8px;
+  color: #000000;
+  margin-bottom: 4px;
+  display: inline-block;
 }
 
 .price-change {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 10px;
-  font-size: 16px;
+  display: inline-block;
+  margin-left: 15px;
+  font-size: 14px;
 }
 
 .price-change.positive {
-  color: #4caf50;
+  color: #006600;
 }
 
 .price-change.negative {
-  color: #f44336;
+  color: #cc0000;
 }
 
 .change-amount {
-  font-weight: 600;
+  font-weight: normal;
 }
 
 .change-percent {
-  opacity: 0.9;
+  opacity: 1;
+  margin-left: 5px;
 }
 
-/* Ticker body with market data */
+/* Ticker body - simple data rows */
 .ticker-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .ticker-row {
   display: flex;
-  justify-content: space-between;
-  gap: 20px;
+  justify-content: flex-start;
+  gap: 30px;
+  margin-bottom: 6px;
 }
 
 .ticker-item {
-  flex: 1;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px;
-  background-color: rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
+  flex: none;
+  display: inline-block;
+  padding: 0;
+  background-color: transparent;
+  border-radius: 0;
 }
 
 .ticker-item.full-width {
-  flex: 1 1 100%;
+  flex: none;
+  margin-top: 6px;
 }
 
 .label {
-  color: #888;
+  color: #666666;
   font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
+  font-weight: normal;
+  text-transform: none;
+  margin-right: 5px;
 }
 
 .value {
-  font-weight: bold;
-  color: #fff;
-  font-size: 14px;
+  font-weight: normal;
+  color: #000000;
+  font-size: 13px;
 }
 
-/* Update indicator */
+/* Remove fancy animations */
 .update-indicator {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, #00ff88, #00d4ff);
-  animation: slideIndicator 2s ease-out;
-  opacity: 0;
+  display: none;
 }
 
-@keyframes slideIndicator {
-  0% {
-    transform: translateX(-100%);
-    opacity: 1;
-  }
-  100% {
-    transform: translateX(0);
-    opacity: 0;
-  }
-}
-
-/* Volume alerts section */
+/* Volume alerts section - Craigslist style */
 .volume-alerts-section {
-  margin-top: 40px;
-  padding: 20px;
-  background-color: rgba(255, 255, 255, 0.05);
-  border-radius: 15px;
+  margin-top: 30px;
+  padding: 10px;
+  background-color: #f5f5f5;
+  border: 1px solid #cccccc;
+  border-radius: 0;
 }
 
 .volume-alerts-section h3 {
-  font-size: 18px;
-  margin-bottom: 15px;
-  color: #ffa726;
+  font-size: 14px;
+  font-weight: bold;
+  margin-bottom: 10px;
+  color: #000000;
 }
 
 .volume-alerts-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: block;
 }
 
 .volume-alert-mini {
   display: flex;
   justify-content: space-between;
-  padding: 8px 12px;
-  background-color: rgba(255, 152, 0, 0.1);
-  border-left: 3px solid #ffa726;
-  border-radius: 4px;
-  font-size: 14px;
+  padding: 4px 0;
+  background-color: transparent;
+  border-left: none;
+  border-bottom: 1px dotted #cccccc;
+  border-radius: 0;
+  font-size: 13px;
+}
+
+.volume-alert-mini:last-child {
+  border-bottom: none;
 }
 
 .alert-ratio {
-  color: #ffa726;
-  font-weight: 600;
+  color: #cc0000;
+  font-weight: normal;
 }
 
-/* Responsive design */
+/* Links style */
+a {
+  color: #0000ee;
+  text-decoration: underline;
+}
+
+a:visited {
+  color: #551a8b;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* Responsive - keep it simple */
 @media (max-width: 768px) {
-  .alerts-grid {
-    grid-template-columns: 1fr;
-    padding: 0;
+  .App {
+    padding: 5px;
   }
 
-  .ticker-card {
-    padding: 20px;
-  }
-
-  .crypto-name {
+  h1 {
     font-size: 20px;
   }
 
+  .ticker-card {
+    padding: 8px;
+  }
+
   .current-price {
-    font-size: 28px;
+    font-size: 18px;
   }
 
   .ticker-row {
     flex-direction: column;
-    gap: 8px;
+    gap: 4px;
   }
 }
 
-@media (min-width: 1400px) {
-  .alerts-grid {
-    grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-  }
+.dense-grid .ticker-body {
+  font-size: 12px;
+}
+
+.dense-grid .label {
+  font-size: 11px;
+}
+
+.dense-grid .value {
+  font-size: 12px;
+}
+
+/* Remove all animations */
+@keyframes cardPulse {
+  /* disabled */
+}
+
+@keyframes slideIndicator {
+  /* disabled */
 }

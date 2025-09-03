@@ -15,10 +15,52 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// USD trading pairs list
+const USD_PAIRS = require("./usd-pairs");
+
+// Get cryptos to monitor from environment or use defaults
+function getCryptosToMonitor() {
+  // Check if we should use ALL USD pairs
+  if (process.env.USE_ALL_USD_PAIRS === "true") {
+    console.log(`Monitoring ALL ${USD_PAIRS.length} USD pairs`);
+    return USD_PAIRS;
+  }
+
+  // Check if specific cryptos are defined
+  if (process.env.MONITORING_CRYPTOS) {
+    return process.env.MONITORING_CRYPTOS.split(",");
+  }
+
+  // Check if we want top N pairs
+  if (process.env.TOP_USD_PAIRS) {
+    const topN = parseInt(process.env.TOP_USD_PAIRS);
+    // Prioritize major pairs first
+    const priorityPairs = [
+      "BTC-USD",
+      "ETH-USD",
+      "SOL-USD",
+      "DOGE-USD",
+      "XRP-USD",
+      "ADA-USD",
+      "AVAX-USD",
+      "LINK-USD",
+      "DOT-USD",
+      "MATIC-USD",
+    ];
+    const otherPairs = USD_PAIRS.filter(
+      (pair) => !priorityPairs.includes(pair)
+    );
+    return [...priorityPairs, ...otherPairs].slice(0, topN);
+  }
+
+  // Default to major pairs
+  return ["BTC-USD", "ETH-USD", "SOL-USD", "DOGE-USD", "XRP-USD"];
+}
+
 // Initialize Coinbase WebSocket handler
 const wsHandler = new CoinbaseWebSocketHandler({
   wsUrl: process.env.WS_URL || "wss://ws-feed.exchange.coinbase.com",
-  cryptos: process.env.MONITORING_CRYPTOS?.split(",") || ["BTC-USD", "ETH-USD"],
+  cryptos: getCryptosToMonitor(),
   volumeThreshold: parseFloat(process.env.VOLUME_THRESHOLD) || 1.5,
   windowMinutes: parseInt(process.env.WINDOW_MINUTES) || 5,
 });
@@ -31,20 +73,20 @@ wsHandler.on("ticker_update", (tickerData) => {
   io.emit("ticker_update", tickerData);
 });
 
-// Handle volume alerts - can be used by bots or logged
-wsHandler.on("volume_alert", (alertData) => {
-  console.log("Volume Alert:", alertData);
-  // Optionally emit to a specific channel for bots
-  io.emit("volume_alert", alertData);
+// // Handle volume alerts - can be used by bots or logged
+// wsHandler.on("volume_alert", (alertData) => {
+//   console.log("Volume Alert:", alertData);
+//   // Optionally emit to a specific channel for bots
+//   io.emit("volume_alert", alertData);
 
-  // Also emit as trade_update for backward compatibility
-  io.emit("trade_update", {
-    crypto: alertData.crypto,
-    current_vol: alertData.current_vol,
-    avg_vol: alertData.avg_vol,
-    threshold: alertData.threshold,
-  });
-});
+//   // Also emit as trade_update for backward compatibility
+//   io.emit("trade_update", {
+//     crypto: alertData.crypto,
+//     current_vol: alertData.current_vol,
+//     avg_vol: alertData.avg_vol,
+//     threshold: alertData.threshold,
+//   });
+// });
 
 // Routes
 app.post("/alert", (req, res) => {

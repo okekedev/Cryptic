@@ -74,8 +74,6 @@ function App() {
   return (
     <div className="App">
       <header className="App-header">
-        <h1>Crypto Live Ticker</h1>
-
         <div className="connection-status">
           Status:{" "}
           <span className={connected ? "connected" : "disconnected"}>
@@ -162,10 +160,9 @@ function App() {
             </div>
           )}
 
-          {/* Optional: Small section for volume alerts */}
           {volumeAlerts.length > 0 && (
             <div className="volume-alerts-section">
-              <h3>Recent Volume Alerts</h3>
+              <h3>volume alerts</h3>
               <div className="volume-alerts-list">
                 {volumeAlerts.slice(-3).map((alert, index) => (
                   <div key={index} className="volume-alert-mini">
