@@ -6,8 +6,6 @@ function App() {
   const [socket, setSocket] = useState(null);
   const [connected, setConnected] = useState(false);
   const [cryptoTickers, setCryptoTickers] = useState({});
-  const [viewMode, setViewMode] = useState("grid"); // grid or list
-  const [sortBy, setSortBy] = useState("change"); // Default to sorting by change
   const [filterText, setFilterText] = useState("");
 
   useEffect(() => {
@@ -57,24 +55,13 @@ function App() {
       );
     }
 
-    // Apply sort
+    // Always sort by percentage change - highest to lowest
     tickers.sort((a, b) => {
-      switch (sortBy) {
-        case "price":
-          return b.price - a.price;
-        case "change":
-          // Sort by percentage change - highest to lowest
-          return b.price_change_percent_24h - a.price_change_percent_24h;
-        case "volume":
-          return b.volume_24h - a.volume_24h;
-        case "name":
-        default:
-          return a.crypto.localeCompare(b.crypto);
-      }
+      return b.price_change_percent_24h - a.price_change_percent_24h;
     });
 
     return tickers;
-  }, [cryptoTickers, sortBy, filterText]);
+  }, [cryptoTickers, filterText]);
 
   // Format price with appropriate decimal places
   const formatPrice = (price) => {
@@ -114,36 +101,6 @@ function App() {
               className="search-input"
             />
           </div>
-
-          <div className="sort-controls">
-            <span>sort by: </span>
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              className="sort-select"
-            >
-              <option value="change">24h change</option>
-              <option value="name">name</option>
-              <option value="price">price</option>
-              <option value="volume">volume</option>
-            </select>
-          </div>
-
-          <div className="view-controls">
-            <span>view: </span>
-            <button
-              className={viewMode === "grid" ? "active" : ""}
-              onClick={() => setViewMode("grid")}
-            >
-              grid
-            </button>
-            <button
-              className={viewMode === "list" ? "active" : ""}
-              onClick={() => setViewMode("list")}
-            >
-              list
-            </button>
-          </div>
         </div>
 
         <div className="alerts-container">
@@ -153,7 +110,7 @@ function App() {
           </h2>
 
           {/* Market overview summary */}
-          {tickersArray.length > 0 && sortBy === "change" && !filterText && (
+          {tickersArray.length > 0 && !filterText && (
             <div className="market-overview">
               <span className="overview-item gainers">
                 gainers:{" "}
@@ -184,24 +141,22 @@ function App() {
             <p className="no-alerts">no pairs match "{filterText}"</p>
           ) : tickersArray.length === 0 ? (
             <p className="no-alerts">loading...</p>
-          ) : viewMode === "grid" ? (
+          ) : (
             <div
               className={`alerts-grid ${
                 tickersArray.length > 20 ? "dense-grid" : ""
               }`}
             >
               {tickersArray.map((ticker, index) => {
-                // Add special classes for top gainers/losers when sorted by change
+                // Add special classes for top gainers/losers
                 let cardClass = "ticker-card";
-                if (sortBy === "change") {
-                  if (index < 3 && ticker.price_change_percent_24h > 5) {
-                    cardClass += " top-gainer";
-                  } else if (
-                    index >= tickersArray.length - 3 &&
-                    ticker.price_change_percent_24h < -5
-                  ) {
-                    cardClass += " top-loser";
-                  }
+                if (index < 3 && ticker.price_change_percent_24h > 5) {
+                  cardClass += " top-gainer";
+                } else if (
+                  index >= tickersArray.length - 3 &&
+                  ticker.price_change_percent_24h < -5
+                ) {
+                  cardClass += " top-loser";
                 }
 
                 return (
@@ -275,42 +230,6 @@ function App() {
                 );
               })}
             </div>
-          ) : (
-            <table className="ticker-list">
-              <thead>
-                <tr>
-                  <th>pair</th>
-                  <th>price</th>
-                  <th>24h change</th>
-                  <th>bid</th>
-                  <th>ask</th>
-                  <th>24h volume</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tickersArray.map((ticker) => (
-                  <tr key={ticker.crypto} className="ticker-row-item">
-                    <td className="crypto-name">{ticker.crypto}</td>
-                    <td>${formatPrice(ticker.price)}</td>
-                    <td
-                      className={
-                        ticker.price_change_24h >= 0 ? "positive" : "negative"
-                      }
-                    >
-                      {ticker.price_change_24h >= 0 ? "+" : ""}
-                      {ticker.price_change_percent_24h.toFixed(2)}%
-                    </td>
-                    <td>${formatPrice(ticker.bid)}</td>
-                    <td>${formatPrice(ticker.ask)}</td>
-                    <td>
-                      {ticker.volume_24h?.toLocaleString(undefined, {
-                        maximumFractionDigits: 0,
-                      })}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
           )}
         </div>
       </header>
