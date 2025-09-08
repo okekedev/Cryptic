@@ -14,7 +14,7 @@ services:
   backend:
     build: ./backend
     ports:
-      - "3000:3000"
+      - "5000:5000"
     volumes:
       - ./data:/app/data
     env_file:
@@ -40,12 +40,31 @@ services:
     env_file:
       - .env
     environment:
-      - BACKEND_URL=http://backend:3000
+      - BACKEND_URL=http://backend:5000
       - PRICE_SPIKE_THRESHOLD=${PRICE_SPIKE_THRESHOLD:-5.0}
       - PRICE_WINDOW_MINUTES=${PRICE_WINDOW_MINUTES:-5}
       - WEBHOOK_URL=${WEBHOOK_URL:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - DB_PATH=/app/data/spike_alerts.db
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # ADD THIS NEW SERVICE HERE 👇
+  telegram-bot:
+    build:
+      context: ./bots/telegram
+      dockerfile: Dockerfile
+    depends_on:
+      - backend
+    env_file:
+      - .env
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - ALERTS_CHANNEL_ID=${ALERTS_CHANNEL_ID:-}
+      - BACKEND_URL=http://backend:5000
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     networks:
       - app-network
     restart: unless-stopped
