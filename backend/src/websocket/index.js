@@ -26,7 +26,6 @@ class WebSocketManager {
   }
 
   setupEventHandlers() {
-    // Handle WebSocket client events
     this.client.on("connected", () => {
       this.io.emit("exchange_connected", {
         status: "connected",
