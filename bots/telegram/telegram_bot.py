@@ -1,36 +1,46 @@
-"""
-Simplified Telegram Bot for Single User
-"""
 import asyncio
 import logging
 import signal
 import sys
 import os
 from datetime import datetime
-import socketio
 from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, ContextTypes
+from aiohttp import web
+import json
 
-# Configuration
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")  # Your personal chat ID
-BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:5000")
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-
-# Optional: Channel for broadcasting
-ALERTS_CHANNEL_ID = os.getenv("ALERTS_CHANNEL_ID", "")
+# Custom filter to block getUpdates logs
+class IgnoreGetUpdatesFilter(logging.Filter):
+    def filter(self, record):
+        return "getUpdates" not in record.getMessage()
 
 # Configure logging
 logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL),
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+
+# Suppress all the noisy loggers
+httpx_logger = logging.getLogger("httpx")
+httpx_logger.setLevel(logging.INFO)
+httpx_logger.addFilter(IgnoreGetUpdatesFilter())
+
+logging.getLogger("httpcore").setLevel(logging.ERROR)
+logging.getLogger("telegram").setLevel(logging.WARNING)
+logging.getLogger("telegram.ext").setLevel(logging.WARNING)
+
+# Get our logger
 logger = logging.getLogger(__name__)
 
+# Configuration
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "8080"))
+ALERTS_CHANNEL_ID = os.getenv("ALERTS_CHANNEL_ID", "")
+
 # Global variables
-sio: socketio.AsyncClient = None
-bot_app: Application = None
-alerts_enabled = True  # Simple on/off switch
+application = None
+alerts_enabled = True
 
 def format_price_alert(data):
     """Format price spike alert for Telegram"""
@@ -75,8 +85,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(
         f"*Alert Status:* {status}\n"
-        f"*Backend:* {BACKEND_URL}\n"
-        f"*Socket.IO:* {'Connected' if sio and sio.connected else 'Disconnected'}",
+        f"*Webhook Port:* {WEBHOOK_PORT}",
         parse_mode='Markdown'
     )
 
@@ -94,7 +103,6 @@ async def disable_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /test command"""
-    # Test alert
     test_data = {
         "symbol": "BTC-USD",
         "spike_type": "pump",
@@ -107,12 +115,6 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     message = format_price_alert(test_data)
     await update.message.reply_text(message, parse_mode='Markdown')
-    
-    # Also test Socket.IO connection
-    if sio and sio.connected:
-        await update.message.reply_text("✅ Socket.IO is connected", parse_mode='Markdown')
-    else:
-        await update.message.reply_text("❌ Socket.IO is NOT connected", parse_mode='Markdown')
 
 async def send_alert(bot: Bot, alert_data: dict):
     """Send alert to user and optional channel"""
@@ -120,7 +122,17 @@ async def send_alert(bot: Bot, alert_data: dict):
         logger.info("Alerts disabled, skipping notification")
         return
     
-    message = format_price_alert(alert_data)
+    # Handle different data formats
+    if 'text' in alert_data and 'spike_type' not in alert_data:
+        # It's a text-only format from webhook, send as plain text
+        message = alert_data['text']
+        parse_mode = None  # Send as plain text, no parsing
+        logger.info("Received text-format alert")
+    else:
+        # It's full data format
+        message = format_price_alert(alert_data)
+        parse_mode = 'Markdown'
+        logger.info(f"Received data-format alert: {alert_data.get('symbol', 'unknown')}")
     
     # Send to personal chat
     if TELEGRAM_CHAT_ID:
@@ -128,9 +140,9 @@ async def send_alert(bot: Bot, alert_data: dict):
             await bot.send_message(
                 chat_id=TELEGRAM_CHAT_ID,
                 text=message,
-                parse_mode='Markdown'
+                parse_mode=parse_mode
             )
-            logger.info(f"📤 Alert sent: {alert_data['symbol']} {alert_data['spike_type']} {alert_data['pct_change']:.2f}%")
+            logger.info("📤 Alert sent successfully")
         except Exception as e:
             logger.error(f"Failed to send alert to user: {e}")
     
@@ -140,70 +152,69 @@ async def send_alert(bot: Bot, alert_data: dict):
             await bot.send_message(
                 chat_id=ALERTS_CHANNEL_ID,
                 text=message,
-                parse_mode='Markdown'
+                parse_mode=parse_mode
             )
         except Exception as e:
             logger.error(f"Failed to send to channel: {e}")
 
-async def setup_socketio(app: Application):
-    """Setup Socket.IO connection to backend"""
-    global sio
+async def start_webhook_server(app: Application):
+    """Start a simple webhook server to receive alerts"""
+    webhook_app = web.Application()
     
-    sio = socketio.AsyncClient(logger=False, engineio_logger=False)
-    
-    @sio.on('spike_alert')
-    async def on_spike_alert(data):
-        """Handle spike alerts from backend"""
+    async def handle_webhook(request):
+        """Handle incoming webhooks from spike-detector"""
         try:
+            data = await request.json()
+            
+            # Send the alert via Telegram
             await send_alert(app.bot, data)
+            
+            return web.Response(text="OK", status=200)
         except Exception as e:
-            logger.error(f"Error processing spike alert: {e}")
+            logger.error(f"Error handling webhook: {e}", exc_info=True)
+            return web.Response(text="Error", status=500)
     
-    @sio.on('connect')
-    async def on_connect():
-        logger.info("Connected to backend Socket.IO")
+    # Add routes
+    webhook_app.router.add_post('/webhook', handle_webhook)
+    webhook_app.router.add_post('/spike-alert', handle_webhook)
     
-    @sio.on('disconnect')
-    async def on_disconnect():
-        logger.warning("Disconnected from backend Socket.IO")
+    # Start server
+    runner = web.AppRunner(webhook_app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', WEBHOOK_PORT)
+    await site.start()
     
-    # Keep trying to connect
-    while True:
-        try:
-            await sio.connect(BACKEND_URL)
-            logger.info(f"Connected to backend at {BACKEND_URL}")
-            break
-        except Exception as e:
-            logger.error(f"Failed to connect to backend: {e}. Retrying in 5s...")
-            await asyncio.sleep(5)
+    logger.info(f"🌐 Webhook server listening on port {WEBHOOK_PORT}")
+    return runner
 
-async def post_init(app: Application):
+async def post_init(app: Application) -> None:
     """Initialize bot after startup"""
-    await setup_socketio(app)
+    # Start webhook server
+    app.bot_data['webhook_runner'] = await start_webhook_server(app)
+    
+    logger.info("✅ Telegram bot is running and monitoring for alerts via webhook")
     
     # Send startup notification
     if TELEGRAM_CHAT_ID:
         try:
             await app.bot.send_message(
                 chat_id=TELEGRAM_CHAT_ID,
-                text="🤖 Bot started and monitoring for alerts!",
+                text=f"🤖 Bot started",
                 parse_mode='Markdown'
             )
         except Exception as e:
             logger.error(f"Failed to send startup message: {e}")
 
-async def shutdown(app: Application):
+async def shutdown(app: Application) -> None:
     """Cleanup on shutdown"""
-    global sio
-    
-    if sio and sio.connected:
-        await sio.disconnect()
+    if 'webhook_runner' in app.bot_data:
+        await app.bot_data['webhook_runner'].cleanup()
     
     logger.info("Bot shutdown complete")
 
-def main():
+def main() -> None:
     """Main entry point"""
-    global bot_app
+    global application
     
     # Validate configuration
     if not TELEGRAM_BOT_TOKEN:
@@ -214,24 +225,24 @@ def main():
         logger.warning("TELEGRAM_CHAT_ID not set! Bot will only work in channel mode.")
     
     # Create application
-    bot_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
     # Add command handlers
-    bot_app.add_handler(CommandHandler("start", start_command))
-    bot_app.add_handler(CommandHandler("help", start_command))
-    bot_app.add_handler(CommandHandler("status", status_command))
-    bot_app.add_handler(CommandHandler("enable", enable_command))
-    bot_app.add_handler(CommandHandler("disable", disable_command))
-    bot_app.add_handler(CommandHandler("test", test_command))
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("help", start_command))
+    application.add_handler(CommandHandler("status", status_command))
+    application.add_handler(CommandHandler("enable", enable_command))
+    application.add_handler(CommandHandler("disable", disable_command))
+    application.add_handler(CommandHandler("test", test_command))
     
     # Setup initialization and shutdown
-    bot_app.post_init = post_init
-    bot_app.post_shutdown = shutdown
+    application.post_init = post_init
+    application.post_shutdown = shutdown
     
     # Handle signals
     def signal_handler(sig, frame):
         logger.info("Received shutdown signal")
-        asyncio.create_task(shutdown(bot_app))
+        asyncio.create_task(shutdown(application))
         sys.exit(0)
     
     signal.signal(signal.SIGINT, signal_handler)
@@ -239,7 +250,11 @@ def main():
     
     # Run the bot
     logger.info("Starting Telegram bot...")
-    bot_app.run_polling(drop_pending_updates=True)
+    logger.info(f"Bot will send alerts to chat ID: {TELEGRAM_CHAT_ID}")
+    if ALERTS_CHANNEL_ID:
+        logger.info(f"Also broadcasting to channel: {ALERTS_CHANNEL_ID}")
+    
+    application.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
     main()

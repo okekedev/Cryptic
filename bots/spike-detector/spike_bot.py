@@ -155,6 +155,7 @@ class PriceSpikeBot:
         self.running = True
         self.reconnect_delay = 1
         self.max_reconnect_delay = 60
+        self.sio = None  # Initialize sio as None
         # Initialize SQLite database
         db_path = os.getenv("DB_PATH", "/app/data/spike_alerts.db")
         try:
@@ -273,6 +274,15 @@ class PriceSpikeBot:
         # Console logging
         logger.warning(alert_msg)
         
+        # Emit via Socket.IO to all connected clients
+        if hasattr(self, 'sio') and self.sio and self.sio.connected:
+            try:
+                # Emit the spike_alert event that telegram-bot is listening for
+                self.sio.emit('spike_alert', spike_data)
+                logger.info(f"Alert emitted via Socket.IO: {spike_data['symbol']} {event_type}")
+            except Exception as e:
+                logger.error(f"Failed to emit Socket.IO event: {e}")
+        
         if WEBHOOK_URL:
             try:
                 if "slack" in WEBHOOK_URL:
@@ -319,25 +329,26 @@ class PriceSpikeBot:
         except Exception as e:
             logger.error(f"Failed to store in database: {e}")
         
-        try:
-            requests.post(f"{BACKEND_URL}/spike-alert", json=spike_data, timeout=5)
-        except Exception as e:
-            logger.debug(f"Failed to send to backend: {e}")
+        # Commented out the HTTP POST since backend doesn't have this endpoint
+        # try:
+        #     requests.post(f"{BACKEND_URL}/spike-alert", json=spike_data, timeout=5)
+        # except Exception as e:
+        #     logger.debug(f"Failed to send to backend: {e}")
 
     def connect_websocket(self):
         """Connect to backend Socket.IO WebSocket"""
-        sio = socketio.Client(logger=False, engineio_logger=False)
+        self.sio = socketio.Client(logger=False, engineio_logger=False)
         
-        @sio.event
+        @self.sio.event
         def connect():
             logger.info("Connected to backend Socket.IO")
             self.reconnect_delay = 1
             
-        @sio.event
+        @self.sio.event
         def disconnect():
             logger.warning("Disconnected from backend")
             
-        @sio.on('ticker_update')
+        @self.sio.on('ticker_update')
         def on_ticker_update(data):
             try:
                 symbol = data['crypto']
@@ -356,8 +367,8 @@ class PriceSpikeBot:
         
         while self.running:
             try:
-                sio.connect(BACKEND_URL)
-                sio.wait()
+                self.sio.connect(BACKEND_URL)
+                self.sio.wait()
             except Exception as e:
                 logger.error(f"Connection failed: {e}")
                 time.sleep(self.reconnect_delay)

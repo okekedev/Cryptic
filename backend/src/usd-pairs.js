@@ -1,7 +1,7 @@
 const USD_TRADING_PAIRS = [
   "MATH-USD",
   "VARA-USD",
-  "PRQ-USD",
+  
   "ICP-USD",
   "TRAC-USD",
   "CRV-USD",
@@ -13,12 +13,12 @@ const USD_TRADING_PAIRS = [
   "TIME-USD",
   "PNG-USD",
   "AXL-USD",
-  "DDX-USD",
+  
   "XCN-USD",
   "C98-USD",
-  "ATA-USD",
-  "EURC-USD",
-  "UST-USD",
+  
+  
+ 
   "GODS-USD",
   "BAL-USD",
   "MPLX-USD",
@@ -26,13 +26,13 @@ const USD_TRADING_PAIRS = [
   "DASH-USD",
   "PERP-USD",
   "RSC-USD",
-  "LIT-USD",
+  
   "API3-USD",
   "A8-USD",
   "ENA-USD",
   "LOKA-USD",
   "DNT-USD",
-  "NU-USD",
+  
   "ALEO-USD",
   "DOGE-USD",
   "IOTX-USD",
@@ -44,8 +44,8 @@ const USD_TRADING_PAIRS = [
   "KAVA-USD",
   "INDEX-USD",
   "AIOZ-USD",
-  "SYLO-USD",
-  "BUSD-USD",
+  
+  
   "LRDS-USD",
   "ZEC-USD",
   "STRK-USD",
@@ -57,7 +57,7 @@ const USD_TRADING_PAIRS = [
   "FOX-USD",
   "GFI-USD",
   "PLU-USD",
-  "RAI-USD",
+  
   "ZRX-USD",
   "SAFE-USD",
   "MASK-USD",
@@ -83,7 +83,7 @@ const USD_TRADING_PAIRS = [
   "ALEPH-USD",
   "GST-USD",
   "GRT-USD",
-  "OMG-USD",
+  
   "BCH-USD",
   "ALICE-USD",
   "BLZ-USD",
@@ -93,7 +93,7 @@ const USD_TRADING_PAIRS = [
   "SAND-USD",
   "WELL-USD",
   "UMA-USD",
-  "RLY-USD",
+  
   "ABT-USD",
   "XRP-USD",
   "MDT-USD",
@@ -103,7 +103,7 @@ const USD_TRADING_PAIRS = [
   "T-USD",
   "BTRST-USD",
   "AVAX-USD",
-  "UPI-USD",
+  
   "VELO-USD",
   "FAI-USD",
   "AUDIO-USD",
@@ -114,20 +114,20 @@ const USD_TRADING_PAIRS = [
   "NEWT-USD",
   "PROVE-USD",
   "DEGEN-USD",
-  "JUP-USD",
+  
   "JITOSOL-USD",
-  "VGX-USD",
+  
   "LSETH-USD",
-  "MTL-USD",
+  
   "AERGO-USD",
   "IDEX-USD",
   "ATOM-USD",
   "VTHO-USD",
   "APT-USD",
-  "DAR-USD",
+  
   "BICO-USD",
   "VVV-USD",
-  "QSP-USD",
+  
   "TRU-USD",
   "SYRUP-USD",
   "ONDO-USD",
@@ -276,9 +276,9 @@ const USD_TRADING_PAIRS = [
   "MEDIA-USD",
   "S-USD",
   "XLM-USD",
-  "TONE-USD",
+  
   "SKL-USD",
-  "LOOM-USD",
+  
   "LINK-USD",
   "YFI-USD",
   "L3-USD",
@@ -291,9 +291,9 @@ const USD_TRADING_PAIRS = [
   "APE-USD",
   "ARPA-USD",
   "ME-USD",
-  "RGT-USD",
+
   "CLV-USD",
-  "RNDR-USD",
+
   "MAGIC-USD",
   "GTC-USD",
   "IP-USD",
@@ -305,8 +305,8 @@ const USD_TRADING_PAIRS = [
   "1INCH-USD",
   "CELR-USD",
   "RPL-USD",
-  "GALA-USD",
-  "QUICK-USD",
+  
+  
   "MOODENG-USD",
   "AST-USD",
   "DRIFT-USD",
@@ -318,7 +318,7 @@ const USD_TRADING_PAIRS = [
   "WLD-USD",
   "ETC-USD",
   "OSMO-USD",
-  "TVK-USD",
+  
   "WIF-USD",
   "PUNDIX-USD",
   "JASMY-USD",
@@ -328,16 +328,16 @@ const USD_TRADING_PAIRS = [
   "NEON-USD",
   "PRO-USD",
   "CVX-USD",
-  "ORN-USD",
+  
   "TRUMP-USD",
   "BLAST-USD",
-  "UNFI-USD",
+  
   "OMNI-USD",
   "LTC-USD",
-  "MXC-USD",
+  
   "NKN-USD",
   "CLANKER-USD",
-  "SYN-USD",
+  
   "OP-USD",
   "TREE-USD",
   "BNT-USD",
@@ -353,7 +353,7 @@ const USD_TRADING_PAIRS = [
   "BAND-USD",
   "MINA-USD",
   "GNO-USD",
-  "BOND-USD",
+ 
   "USELESS-USD",
   "FET-USD",
   "SPK-USD",
@@ -362,7 +362,7 @@ const USD_TRADING_PAIRS = [
   "LQTY-USD",
   "W-USD",
   "ENS-USD",
-  "MPL-USD",
+  
   "ARB-USD",
   "ZK-USD",
   "PYTH-USD",

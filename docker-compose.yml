@@ -57,6 +57,8 @@ services:
       dockerfile: Dockerfile
     depends_on:
       - backend
+    ports:
+      - "8080:8080"
     env_file:
       - .env
     environment:
@@ -64,6 +66,7 @@ services:
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
       - ALERTS_CHANNEL_ID=${ALERTS_CHANNEL_ID:-}
       - BACKEND_URL=http://backend:5000
+      - WEBHOOK_PORT=8080
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     networks:
       - app-network
@@ -80,6 +83,26 @@ services:
 networks:
   app-network:
     driver: bridge
+
+log-monitor:
+  build: 
+    context: ./bots/log-monitor
+    dockerfile: Dockerfile
+  depends_on:
+    - telegram-bot
+    - backend 
+    -  spike-detector
+  volumes: 
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+  environment:
+    - TELEGRAM_WEBHOOK_URL=http://telegram-bot:8080/webhook
+    - MONITOR_INTERVAL=30  # Check logs every 30 seconds
+    - LOG_LEVEL=${LOG_LEVEL:-INFO}
+  networks:
+    - app-network
+  restart: unless-stopped
+
+
 
 volumes:
   data:
