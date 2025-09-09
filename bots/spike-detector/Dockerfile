@@ -9,8 +9,8 @@ COPY requirements.txt .
 # Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY spike_bot.py .
+# Copy ALL Python files (not just spike_bot.py)
+COPY *.py ./
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1

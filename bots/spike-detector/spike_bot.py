@@ -10,6 +10,7 @@ from typing import Dict, Deque, Optional, Tuple
 import logging
 import signal
 import socketio
+from enhanced_price_tracker import EnhancedPriceTracker
 
 # Configuration from environment variables
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:3000")

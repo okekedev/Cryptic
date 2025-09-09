@@ -43,8 +43,15 @@ application = None
 alerts_enabled = True
 
 def format_price_alert(data):
-    """Format price spike alert for Telegram"""
     emoji = "🚀" if data['spike_type'] == 'pump' else "📉"
+    
+    timestamp_str = ""
+    if 'timestamp' in data:
+        try:
+            dt = datetime.fromisoformat(data['timestamp'].replace('Z', '+00:00'))
+            timestamp_str = f"*time (UTC):* {dt.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        except:
+            timestamp_str = f"*time:* {data['timestamp']}\n"
     
     if data.get('event_type') == 'momentum_end':
         return (
@@ -55,6 +62,7 @@ def format_price_alert(data):
             f"*Peak price:* ${data['peak_price']:.6f}\n"
             f"*Exit price:* ${data['new_price']:.6f}\n"
             f"*Duration:* {data['time_span_seconds']/60:.1f} min"
+            f"{timestamp_str}"
         )
     else:
         return (
@@ -63,6 +71,7 @@ def format_price_alert(data):
             f"*Change:* {data['pct_change']:.2f}%\n"
             f"*Price:* ${data['old_price']:.6f} → ${data['new_price']:.6f}\n"
             f"*Time span:* {data['time_span_seconds']:.0f}s"
+            f"{timestamp_str}"
         )
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -117,7 +126,6 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(message, parse_mode='Markdown')
 
 async def send_alert(bot: Bot, alert_data: dict):
-    """Send alert to user and optional channel"""
     if not alerts_enabled:
         logger.info("Alerts disabled, skipping notification")
         return

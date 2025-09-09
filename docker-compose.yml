@@ -50,7 +50,6 @@ services:
       - app-network
     restart: unless-stopped
 
-  # ADD THIS NEW SERVICE HERE 👇
   telegram-bot:
     build:
       context: ./bots/telegram
@@ -80,29 +79,30 @@ services:
       - app-network
     restart: always
 
+  # log-monitor:
+  #   build: 
+  #     context: ./bots/logs-monitor
+  #     dockerfile: Dockerfile
+  #   depends_on:
+  #     - telegram-bot
+  #     - backend 
+  #     - spike-detector
+  #   volumes: 
+  #     # For Windows, use named pipe instead of unix socket
+  #     - //var/run/docker.sock:/var/run/docker.sock:ro
+  #   environment:
+  #     - TELEGRAM_WEBHOOK_URL=http://telegram-bot:8080/webhook
+  #     - MONITOR_INTERVAL=30
+  #     - LOG_LEVEL=${LOG_LEVEL:-INFO}
+  #     # Add Docker host for Windows
+  #     - DOCKER_HOST=unix:///var/run/docker.sock
+  #   networks:
+  #     - app-network
+  #   restart: unless-stopped
+
 networks:
   app-network:
     driver: bridge
-
-log-monitor:
-  build: 
-    context: ./bots/log-monitor
-    dockerfile: Dockerfile
-  depends_on:
-    - telegram-bot
-    - backend 
-    -  spike-detector
-  volumes: 
-    - /var/run/docker.sock:/var/run/docker.sock:ro
-  environment:
-    - TELEGRAM_WEBHOOK_URL=http://telegram-bot:8080/webhook
-    - MONITOR_INTERVAL=30  # Check logs every 30 seconds
-    - LOG_LEVEL=${LOG_LEVEL:-INFO}
-  networks:
-    - app-network
-  restart: unless-stopped
-
-
 
 volumes:
   data:
