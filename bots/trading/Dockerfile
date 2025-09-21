@@ -2,8 +2,12 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir ccxt requests
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy bot code
 COPY . .
 
-CMD ["python", "trade.py"]
+# Run the trading bot
+CMD ["python", "-u", "coinbase_trading_bot.py"]
