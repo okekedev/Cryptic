@@ -15,5 +15,14 @@ class CoinbaseTradeBot:
             'max_position_percentage': 100,
             'min_trade_usd': 10.00,
             'reserve_percentage': 1.0,
-            'defualt_order_type': 'market_market_ioc',
+            'default_order_type': 'market_market_ioc',
         }
+        
+    def check_account_balances(self, limit: int = 49, cursor: Optional[str] = None) -> Dict:
+        params = {'limit': limit}
+        if cursor: 
+            params['cursor'] = cursor
+            
+        response = requests.get(f"{self.base_url}/accounts", params=params)
+        response.raise_for_status()
+        return response.json()
