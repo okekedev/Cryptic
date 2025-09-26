@@ -16,46 +16,27 @@ const port = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// USD trading pairs list
-const USD_PAIRS = require("./usd-pairs");
+// Note: USD pairs are now fetched dynamically from Coinbase API
 
-// Get cryptos to monitor from environment or use defaults
+// Get cryptos to monitor from environment - now uses dynamic fetching
 function getCryptosToMonitor() {
-  // Check if we should use ALL USD pairs
-  if (process.env.USE_ALL_USD_PAIRS === "true") {
-    console.log(`Monitoring ALL ${USD_PAIRS.length} USD pairs`);
-    return USD_PAIRS;
-  }
-
   // Check if specific cryptos are defined
   if (process.env.MONITORING_CRYPTOS) {
-    return process.env.MONITORING_CRYPTOS.split(",");
+    const customPairs = process.env.MONITORING_CRYPTOS.split(",").map(pair => pair.trim());
+    console.log(`Monitoring custom pairs: ${customPairs.join(", ")}`);
+    return customPairs;
   }
 
   // Check if we want top N pairs
   if (process.env.TOP_USD_PAIRS) {
     const topN = parseInt(process.env.TOP_USD_PAIRS);
-    // Prioritize major pairs first
-    const priorityPairs = [
-      "BTC-USD",
-      "ETH-USD",
-      "SOL-USD",
-      "DOGE-USD",
-      "XRP-USD",
-      "ADA-USD",
-      "AVAX-USD",
-      "LINK-USD",
-      "DOT-USD",
-      "MATIC-USD",
-    ];
-    const otherPairs = USD_PAIRS.filter(
-      (pair) => !priorityPairs.includes(pair)
-    );
-    return [...priorityPairs, ...otherPairs].slice(0, topN);
+    console.log(`Will monitor top ${topN} USD pairs (determined dynamically)`);
+    return { topN: topN }; // Return object to indicate we want top N pairs
   }
 
-  // Default to major pairs
-  return ["BTC-USD", "ETH-USD", "SOL-USD", "DOGE-USD", "XRP-USD"];
+  // Default: Monitor all USD pairs (will be fetched dynamically)
+  console.log('Will monitor all USD pairs (fetched dynamically from Coinbase API)');
+  return null; // null indicates use dynamic fetching
 }
 
 // Validate required Coinbase API credentials
@@ -67,17 +48,18 @@ if (!process.env.COINBASE_API_KEY || !process.env.COINBASE_SIGNING_KEY) {
 }
 
 // Initialize Coinbase Advanced Trade WebSocket handler
+const cryptoConfig = getCryptosToMonitor();
 const wsHandler = new CoinbaseWebSocketHandler({
   wsUrl: process.env.WS_URL || "wss://advanced-trade-ws.coinbase.com",
-  cryptos: getCryptosToMonitor(),
+  cryptoConfig: cryptoConfig, // Pass the config object instead of cryptos array
   volumeThreshold: parseFloat(process.env.VOLUME_THRESHOLD) || 1.5,
   windowMinutes: parseInt(process.env.WINDOW_MINUTES) || 5,
   apiKey: process.env.COINBASE_API_KEY,
   signingKey: process.env.COINBASE_SIGNING_KEY,
 });
 
-// Connect to Coinbase WebSocket
-wsHandler.connect();
+// Initialize WebSocket handler (fetches USD pairs and connects)
+wsHandler.initialize();
 
 // Handle ticker updates - stream to all connected clients
 wsHandler.on("ticker_update", (tickerData) => {
@@ -154,8 +136,5 @@ process.on("SIGTERM", () => {
 // Start server
 http.listen(port, () => {
   console.log(`Backend listening at http://localhost:${port}`);
-  console.log(
-    "Advanced Trade WebSocket streaming ticker data for:",
-    getCryptosToMonitor().join(', ')
-  );
+  console.log("Advanced Trade WebSocket with dynamic USD pair discovery enabled");
 });

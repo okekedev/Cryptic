@@ -16,6 +16,19 @@ class JWTTokenManager {
    */
   generateToken() {
     try {
+      // Validate signing key format
+      if (!this.signingKey) {
+        throw new Error('COINBASE_SIGNING_KEY is not provided');
+      }
+
+      if (!this.signingKey.includes('-----BEGIN EC PRIVATE KEY-----')) {
+        throw new Error('COINBASE_SIGNING_KEY must start with "-----BEGIN EC PRIVATE KEY-----"');
+      }
+
+      if (!this.signingKey.includes('-----END EC PRIVATE KEY-----')) {
+        throw new Error('COINBASE_SIGNING_KEY must end with "-----END EC PRIVATE KEY-----"');
+      }
+
       const now = Math.floor(Date.now() / 1000);
       const payload = {
         iss: "cdp",
@@ -35,11 +48,26 @@ class JWTTokenManager {
       this.currentToken = token;
       this.tokenExpiry = (now + 120) * 1000; // Convert to milliseconds
 
+      console.log('JWT token generated successfully');
       return token;
     } catch (error) {
       console.error('Failed to generate JWT token:', error.message);
-      console.error('Please verify your COINBASE_SIGNING_KEY is properly formatted.');
-      throw error;
+
+      if (error.message.includes('secretOrPrivateKey must be an asymmetric key')) {
+        console.error('');
+        console.error('🔑 JWT Token Error: Invalid private key format');
+        console.error('Your COINBASE_SIGNING_KEY in .env must be formatted like this:');
+        console.error('COINBASE_SIGNING_KEY=-----BEGIN EC PRIVATE KEY-----\\nYOUR_KEY_CONTENT\\n-----END EC PRIVATE KEY-----');
+        console.error('');
+        console.error('Make sure:');
+        console.error('1. Key starts with -----BEGIN EC PRIVATE KEY-----');
+        console.error('2. Key ends with -----END EC PRIVATE KEY-----');
+        console.error('3. Use \\n for newlines (not actual newlines)');
+        console.error('4. No extra spaces around the = sign');
+        console.error('');
+      }
+
+      return null; // Return null instead of throwing to allow graceful handling
     }
   }
 
@@ -53,7 +81,12 @@ class JWTTokenManager {
     // Generate new token if we don't have one or it's expired (with 30s buffer)
     if (!this.currentToken || !this.tokenExpiry || now >= (this.tokenExpiry - 30000)) {
       console.log('Generating new JWT token...');
-      return this.generateToken();
+      const newToken = this.generateToken();
+      if (!newToken) {
+        console.error('Failed to generate valid JWT token');
+        return null;
+      }
+      return newToken;
     }
 
     return this.currentToken;
@@ -76,7 +109,12 @@ class JWTTokenManager {
    */
   refreshToken() {
     console.log('Force refreshing JWT token...');
-    return this.generateToken();
+    const newToken = this.generateToken();
+    if (!newToken) {
+      console.error('Failed to refresh JWT token');
+      return null;
+    }
+    return newToken;
   }
 }
 
