@@ -1,17 +1,26 @@
 // backend/src/websocket-handler.js
 const WebSocket = require("ws");
 const EventEmitter = require("events");
+const JWTTokenManager = require('./jwt-utils');
 
 class CoinbaseWebSocketHandler extends EventEmitter {
   constructor(config) {
     super();
+
+    // Validate required API credentials
+    if (!config.apiKey || !config.signingKey) {
+      throw new Error('COINBASE_API_KEY and COINBASE_SIGNING_KEY are required for Advanced Trade WebSocket');
+    }
+
     this.config = {
-      wsUrl: config.wsUrl || "wss://ws-feed.exchange.coinbase.com",
+      wsUrl: config.wsUrl || "wss://advanced-trade-ws.coinbase.com",
       cryptos: config.cryptos || ["BTC-USD", "ETH-USD"],
       volumeThreshold: config.volumeThreshold || 1.5,
       windowMinutes: config.windowMinutes || 5,
       reconnectDelay: config.reconnectDelay || 1000,
       maxReconnectDelay: config.maxReconnectDelay || 60000,
+      apiKey: config.apiKey,
+      signingKey: config.signingKey,
     };
 
     this.ws = null;
@@ -19,6 +28,10 @@ class CoinbaseWebSocketHandler extends EventEmitter {
     this.volumeWindows = {};
     this.historicalAvgs = {};
     this.currentTickers = {};
+
+    // Initialize JWT token manager for Advanced Trade WebSocket
+    this.jwtManager = new JWTTokenManager(this.config.apiKey, this.config.signingKey);
+    this.tokenRefreshInterval = null;
 
     // Initialize data structures for each crypto
     this.config.cryptos.forEach((crypto) => {
@@ -33,9 +46,10 @@ class CoinbaseWebSocketHandler extends EventEmitter {
       this.ws = new WebSocket(this.config.wsUrl);
 
       this.ws.on("open", () => {
-        console.log("WebSocket connected to Coinbase");
+        console.log("WebSocket connected to Coinbase Advanced Trade");
         this.reconnectAttempts = 0;
         this.subscribe();
+        this.startTokenRefresh();
       });
 
       this.ws.on("message", (data) => {
@@ -43,11 +57,15 @@ class CoinbaseWebSocketHandler extends EventEmitter {
       });
 
       this.ws.on("error", (error) => {
-        console.error("WebSocket error:", error);
+        console.error("Advanced Trade WebSocket error:", error);
+        if (error.message && error.message.includes('401')) {
+          console.error('Authentication failed. Please check your COINBASE_API_KEY and COINBASE_SIGNING_KEY.');
+        }
       });
 
       this.ws.on("close", () => {
         console.log("WebSocket disconnected");
+        this.stopTokenRefresh();
         this.handleReconnect();
       });
     } catch (error) {
@@ -57,18 +75,29 @@ class CoinbaseWebSocketHandler extends EventEmitter {
   }
 
   subscribe() {
-    const subscribeMsg = {
+    const jwt = this.jwtManager.getValidToken();
+
+    // Subscribe to ticker channel
+    const tickerSubscribeMsg = {
       type: "subscribe",
       product_ids: this.config.cryptos,
-      channels: [
-        "ticker", // For real-time price data
-        "matches", // For volume tracking
-      ],
+      channel: "ticker",
+      jwt: jwt,
     };
 
-    this.ws.send(JSON.stringify(subscribeMsg));
+    // Subscribe to market_trades channel for volume tracking
+    const tradesSubscribeMsg = {
+      type: "subscribe",
+      product_ids: this.config.cryptos,
+      channel: "market_trades",
+      jwt: jwt,
+    };
+
+    this.ws.send(JSON.stringify(tickerSubscribeMsg));
+    this.ws.send(JSON.stringify(tradesSubscribeMsg));
+
     console.log(
-      "Subscribed to ticker and matches channels for:",
+      "Subscribed to Advanced Trade WebSocket ticker and market_trades channels for:",
       this.config.cryptos
     );
   }
@@ -81,14 +110,34 @@ class CoinbaseWebSocketHandler extends EventEmitter {
         case "ticker":
           this.handleTickerMessage(message);
           break;
-        case "match":
-          this.handleMatchMessage(message);
+        case "market_trades":
+          // Advanced Trade market_trades message
+          if (message.events) {
+            message.events.forEach(event => {
+              this.handleAdvancedTradeMessage(event, message.channel);
+            });
+          }
           break;
         case "subscriptions":
           console.log("Subscription confirmed:", message);
           break;
         case "error":
-          console.error("Coinbase error:", message);
+          console.error("Coinbase Advanced Trade error:", message);
+          if (message.message) {
+            if (message.message.includes('jwt') || message.message.includes('token')) {
+              console.log('JWT token may be expired, refreshing...');
+              this.jwtManager.refreshToken();
+              // Resubscribe with new token
+              if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                setTimeout(() => this.subscribe(), 1000);
+              }
+            } else if (message.message.includes('auth') || message.message.includes('unauthorized')) {
+              console.error('Authentication failed. Please verify your API credentials.');
+            }
+          }
+          break;
+        case "heartbeat":
+          // Advanced Trade heartbeat - can be ignored or used for connection monitoring
           break;
       }
     } catch (error) {
@@ -121,9 +170,40 @@ class CoinbaseWebSocketHandler extends EventEmitter {
     this.emit("ticker_update", this.currentTickers[crypto]);
   }
 
-  handleMatchMessage(match) {
-    const crypto = match.product_id;
-    const size = parseFloat(match.size);
+  handleAdvancedTradeMessage(event, channel) {
+    if (channel === "market_trades" && event.trades) {
+      event.trades.forEach(trade => {
+        const crypto = trade.product_id;
+        const size = parseFloat(trade.size);
+        this.processVolumeData(crypto, size);
+      });
+    } else if (channel === "ticker" && event.tickers) {
+      event.tickers.forEach(ticker => {
+        this.handleAdvancedTradeTicker(ticker);
+      });
+    }
+  }
+
+  handleAdvancedTradeTicker(ticker) {
+    // Convert Advanced Trade ticker format to standardized format
+    const crypto = ticker.product_id;
+    const standardFormat = {
+      product_id: crypto,
+      price: ticker.price,
+      best_bid: ticker.best_bid,
+      best_ask: ticker.best_ask,
+      volume_24h: ticker.volume_24h,
+      open_24h: ticker.open_24h,
+      low_24h: ticker.low_24h,
+      high_24h: ticker.high_24h,
+      time: ticker.time,
+      sequence: ticker.sequence || Date.now(), // Fallback if sequence not provided
+    };
+
+    this.handleTickerMessage(standardFormat);
+  }
+
+  processVolumeData(crypto, size) {
     const now = Date.now();
     const windowMs = this.config.windowMinutes * 60 * 1000;
 
@@ -179,6 +259,9 @@ class CoinbaseWebSocketHandler extends EventEmitter {
     console.log(`Reconnecting in ${delay}ms...`);
     this.reconnectAttempts++;
 
+    // Refresh JWT token before reconnecting
+    this.jwtManager.refreshToken();
+
     setTimeout(() => {
       this.connect();
     }, delay);
@@ -192,7 +275,33 @@ class CoinbaseWebSocketHandler extends EventEmitter {
     return this.currentTickers;
   }
 
+  startTokenRefresh() {
+    // Clear any existing interval
+    this.stopTokenRefresh();
+
+    // Refresh token every 90 seconds (30 seconds before expiry)
+    this.tokenRefreshInterval = setInterval(() => {
+      if (this.jwtManager.isTokenExpired()) {
+        console.log('JWT token expiring soon, refreshing proactively...');
+        this.jwtManager.refreshToken();
+
+        // Resubscribe with new token
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          this.subscribe();
+        }
+      }
+    }, 90000); // 90 seconds
+  }
+
+  stopTokenRefresh() {
+    if (this.tokenRefreshInterval) {
+      clearInterval(this.tokenRefreshInterval);
+      this.tokenRefreshInterval = null;
+    }
+  }
+
   disconnect() {
+    this.stopTokenRefresh();
     if (this.ws) {
       this.ws.close();
       this.ws = null;

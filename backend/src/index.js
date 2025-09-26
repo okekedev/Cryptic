@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+require('dotenv').config();
 const app = express();
 const http = require("http").createServer(app);
 const io = require("socket.io")(http, {
@@ -57,12 +58,22 @@ function getCryptosToMonitor() {
   return ["BTC-USD", "ETH-USD", "SOL-USD", "DOGE-USD", "XRP-USD"];
 }
 
-// Initialize Coinbase WebSocket handler
+// Validate required Coinbase API credentials
+if (!process.env.COINBASE_API_KEY || !process.env.COINBASE_SIGNING_KEY) {
+  console.error('❌ COINBASE_API_KEY and COINBASE_SIGNING_KEY environment variables are required.');
+  console.error('   Get your API credentials from: https://portal.cloud.coinbase.com/access/api');
+  console.error('   See .env.example for configuration details.');
+  process.exit(1);
+}
+
+// Initialize Coinbase Advanced Trade WebSocket handler
 const wsHandler = new CoinbaseWebSocketHandler({
-  wsUrl: process.env.WS_URL || "wss://ws-feed.exchange.coinbase.com",
+  wsUrl: process.env.WS_URL || "wss://advanced-trade-ws.coinbase.com",
   cryptos: getCryptosToMonitor(),
   volumeThreshold: parseFloat(process.env.VOLUME_THRESHOLD) || 1.5,
   windowMinutes: parseInt(process.env.WINDOW_MINUTES) || 5,
+  apiKey: process.env.COINBASE_API_KEY,
+  signingKey: process.env.COINBASE_SIGNING_KEY,
 });
 
 // Connect to Coinbase WebSocket
@@ -144,7 +155,7 @@ process.on("SIGTERM", () => {
 http.listen(port, () => {
   console.log(`Backend listening at http://localhost:${port}`);
   console.log(
-    "WebSocket streaming ticker data for:",
-    process.env.MONITORING_CRYPTOS || "BTC-USD,ETH-USD"
+    "Advanced Trade WebSocket streaming ticker data for:",
+    getCryptosToMonitor().join(', ')
   );
 });
