@@ -1,22 +1,24 @@
 services:
-  frontend:
+  frontend-dev:
     build:
       context: ./frontend
       target: production
+    container_name: bot-frontend-dev
     ports:
-      - "80:80"
+      - "3001:80" # Changed from 80 to 3001
     depends_on:
-      - backend
+      - backend-dev
     networks:
-      - app-network
+      - app-dev-network
     restart: always
 
-  backend:
+  backend-dev:
     build: ./backend
+    container_name: bot-backend-dev
     ports:
-      - "5000:5000"
+      - "5001:5000" # Changed from 5000 to 5001
     volumes:
-      - ./data:/app/data
+      - ./data-dev:/app/data # Separate data volume
     env_file:
       - .env
     environment:
@@ -26,85 +28,66 @@ services:
       - WINDOW_MINUTES=${WINDOW_MINUTES:-5}
       - EMIT_RAW_TRADES=${EMIT_RAW_TRADES:-false}
     networks:
-      - app-network
+      - app-dev-network
     restart: always
 
-  spike-detector:
+  spike-detector-dev:
     build:
       context: ./bots/spike-detector
       dockerfile: Dockerfile
+    container_name: bot-spike-detector-dev
     depends_on:
-      - backend
+      - backend-dev
     volumes:
-      - ./data:/app/data
+      - ./data-dev:/app/data # Separate data volume
     env_file:
       - .env
     environment:
-      - BACKEND_URL=http://backend:5000
+      - BACKEND_URL=http://backend-dev:5000 # Points to backend-dev
       - PRICE_SPIKE_THRESHOLD=${PRICE_SPIKE_THRESHOLD:-5.0}
       - PRICE_WINDOW_MINUTES=${PRICE_WINDOW_MINUTES:-5}
       - WEBHOOK_URL=${WEBHOOK_URL:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - DB_PATH=/app/data/spike_alerts.db
     networks:
-      - app-network
+      - app-dev-network
     restart: unless-stopped
 
-  telegram-bot:
+  telegram-bot-dev:
     build:
       context: ./bots/telegram
       dockerfile: Dockerfile
+    container_name: bot-telegram-bot-dev
     depends_on:
-      - backend
+      - backend-dev
     ports:
-      - "8080:8080"
+      - "8081:8080" # Changed from 8080 to 8081
     env_file:
       - .env
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
       - ALERTS_CHANNEL_ID=${ALERTS_CHANNEL_ID:-}
-      - BACKEND_URL=http://backend:5000
+      - BACKEND_URL=http://backend-dev:5000 # Points to backend-dev
       - WEBHOOK_PORT=8080
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     networks:
-      - app-network
+      - app-dev-network
     restart: unless-stopped
 
-  trading-bot:
+  trading-bot-dev:
     build: ./bots/trading
+    container_name: bot-trading-bot-dev
     env_file:
       - .env
     networks:
-      - app-network
+      - app-dev-network
     restart: always
 
-  # log-monitor:
-  #   build: 
-  #     context: ./bots/logs-monitor
-  #     dockerfile: Dockerfile
-  #   depends_on:
-  #     - telegram-bot
-  #     - backend 
-  #     - spike-detector
-  #   volumes: 
-  #     # For Windows, use named pipe instead of unix socket
-  #     - //var/run/docker.sock:/var/run/docker.sock:ro
-  #   environment:
-  #     - TELEGRAM_WEBHOOK_URL=http://telegram-bot:8080/webhook
-  #     - MONITOR_INTERVAL=30
-  #     - LOG_LEVEL=${LOG_LEVEL:-INFO}
-  #     # Add Docker host for Windows
-  #     - DOCKER_HOST=unix:///var/run/docker.sock
-  #   networks:
-  #     - app-network
-  #   restart: unless-stopped
-
- # Use nodemon for auto-reload
-
 networks:
-  app-network:
+  app-dev-network:
     driver: bridge
+    name: bot-dev-network
 
 volumes:
-  data:
+  data-dev:
