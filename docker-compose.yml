@@ -20,7 +20,7 @@ services:
     env_file:
       - .env
     environment:
-      - WS_URL=wss://ws-feed.exchange.coinbase.com
+      - WS_URL=wss://advanced-trade-ws.coinbase.com
       - USE_ALL_USD_PAIRS=true
       - VOLUME_THRESHOLD=${VOLUME_THRESHOLD:-1.5}
       - WINDOW_MINUTES=${WINDOW_MINUTES:-5}
@@ -78,6 +78,19 @@ services:
     networks:
       - app-network
     restart: always
+
+  ngrok:
+    image: ngrok/ngrok:alpine
+    command: http frontend:80
+    ports:
+      - "4040:4040"
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    depends_on:
+      - frontend
+    networks:
+      - app-network
+    restart: unless-stopped
 
   # log-monitor:
   #   build: 

@@ -31,6 +31,11 @@ class CoinbaseWebSocketHandler extends EventEmitter {
     this.historicalAvgs = {};
     this.currentTickers = {};
 
+    // Priority system for active trades
+    this.priorityPairs = new Set(); // Set of product_ids that need priority updates
+    this.priorityUpdateInterval = 1000; // Priority updates every 1 second
+    this.lastPriorityUpdate = {}; // Track last update time for priority pairs
+
     // Initialize JWT token manager for Advanced Trade WebSocket
     this.jwtManager = new JWTTokenManager(this.config.apiKey, this.config.signingKey);
     this.tokenRefreshInterval = null;
@@ -256,49 +261,67 @@ class CoinbaseWebSocketHandler extends EventEmitter {
     try {
       const message = JSON.parse(data);
 
-      switch (message.type) {
+      // Handle messages based on channel (Advanced Trade API uses 'channel' not 'type' at root)
+      switch (message.channel) {
         case "ticker":
-          this.handleTickerMessage(message);
-          break;
-        case "ticker_batch":
-          // Handle ticker_batch events
+          // Single ticker update
           if (message.events) {
             message.events.forEach(event => {
-              this.handleTickerMessage(event);
+              if (event.tickers) {
+                event.tickers.forEach(ticker => this.handleTickerMessage(ticker));
+              }
+            });
+          }
+          break;
+        case "ticker_batch":
+          // Batch ticker updates
+          if (message.events) {
+            message.events.forEach(event => {
+              if (event.tickers) {
+                event.tickers.forEach(ticker => this.handleTickerMessage(ticker));
+              }
             });
           }
           break;
         case "market_trades":
-          // Advanced Trade market_trades message
+          // Market trades for volume tracking
           if (message.events) {
             message.events.forEach(event => {
-              this.handleAdvancedTradeMessage(event, message.channel);
+              if (event.trades) {
+                event.trades.forEach(trade => {
+                  const crypto = trade.product_id;
+                  const size = parseFloat(trade.size);
+                  this.processVolumeData(crypto, size);
+                });
+              }
             });
           }
           break;
         case "subscriptions":
-          console.log("Subscription confirmed:", message);
+          console.log("✅ Subscription confirmed:", message.events ? JSON.stringify(message.events[0]).substring(0, 200) : 'OK');
           break;
-        case "error":
-          console.error("Coinbase Advanced Trade error:", message);
-          if (message.message) {
-            const errorMsg = message.message.toLowerCase();
-            if (errorMsg.includes('jwt') || errorMsg.includes('token') || errorMsg.includes('auth')) {
-              console.log('JWT authentication failed, refreshing token and resubscribing...');
-              this.jwtManager.refreshToken();
-              // Reconnect with fresh token
-              setTimeout(() => {
-                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                  this.subscribe();
-                }
-              }, 1000);
-            } else if (errorMsg.includes('unauthorized')) {
-              console.error('Authentication failed. Please verify your API credentials.');
+        case "heartbeats":
+          // Heartbeat - connection is alive
+          break;
+        default:
+          // Check if this is an error message
+          if (message.type === "error") {
+            console.error("❌ Coinbase Advanced Trade error:", message);
+            if (message.message) {
+              const errorMsg = message.message.toLowerCase();
+              if (errorMsg.includes('jwt') || errorMsg.includes('token') || errorMsg.includes('auth')) {
+                console.log('JWT authentication failed, refreshing token and resubscribing...');
+                this.jwtManager.refreshToken();
+                setTimeout(() => {
+                  if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    this.subscribe();
+                  }
+                }, 1000);
+              } else if (errorMsg.includes('unauthorized')) {
+                console.error('Authentication failed. Please verify your API credentials.');
+              }
             }
           }
-          break;
-        case "heartbeat":
-          // Advanced Trade heartbeat - can be ignored or used for connection monitoring
           break;
       }
     } catch (error) {
@@ -307,28 +330,46 @@ class CoinbaseWebSocketHandler extends EventEmitter {
   }
 
   handleTickerMessage(ticker) {
-    // Update current ticker data
+    // Update current ticker data - handle Advanced Trade API format
     const crypto = ticker.product_id;
+    const price = parseFloat(ticker.price);
+    const volume_24h = parseFloat(ticker.volume_24_h || ticker.volume_24h || 0);
+    const low_24h = parseFloat(ticker.low_24_h || ticker.low_24h || 0);
+    const high_24h = parseFloat(ticker.high_24_h || ticker.high_24h || 0);
+
+    // Calculate open_24h from price_percent_chg_24_h if available
+    const price_percent_chg = parseFloat(ticker.price_percent_chg_24_h || 0);
+    const open_24h = price_percent_chg !== 0 ? price / (1 + price_percent_chg / 100) : price;
+
     this.currentTickers[crypto] = {
       crypto: crypto,
-      price: parseFloat(ticker.price),
-      bid: parseFloat(ticker.best_bid),
-      ask: parseFloat(ticker.best_ask),
-      volume_24h: parseFloat(ticker.volume_24h),
-      price_24h: parseFloat(ticker.open_24h),
-      low_24h: parseFloat(ticker.low_24h),
-      high_24h: parseFloat(ticker.high_24h),
-      price_change_24h: parseFloat(ticker.price) - parseFloat(ticker.open_24h),
-      price_change_percent_24h:
-        ((parseFloat(ticker.price) - parseFloat(ticker.open_24h)) /
-          parseFloat(ticker.open_24h)) *
-        100,
-      time: ticker.time,
-      sequence: ticker.sequence,
+      price: price,
+      bid: parseFloat(ticker.best_bid || ticker.bid || 0),
+      ask: parseFloat(ticker.best_ask || ticker.ask || 0),
+      volume_24h: volume_24h,
+      price_24h: open_24h,
+      low_24h: low_24h,
+      high_24h: high_24h,
+      price_change_24h: price - open_24h,
+      price_change_percent_24h: price_percent_chg,
+      time: ticker.time || ticker.timestamp || new Date().toISOString(),
+      sequence: ticker.sequence || Date.now(),
     };
 
     // Emit ticker update for frontend
     this.emit("ticker_update", this.currentTickers[crypto]);
+
+    // Emit priority update if this is a priority pair
+    if (this.priorityPairs.has(crypto)) {
+      const now = Date.now();
+      const lastUpdate = this.lastPriorityUpdate[crypto] || 0;
+
+      // Emit priority updates more frequently
+      if (now - lastUpdate >= this.priorityUpdateInterval) {
+        this.emit("priority_ticker_update", this.currentTickers[crypto]);
+        this.lastPriorityUpdate[crypto] = now;
+      }
+    }
   }
 
   handleAdvancedTradeMessage(event, channel) {
@@ -467,6 +508,43 @@ class CoinbaseWebSocketHandler extends EventEmitter {
       this.ws.close();
       this.ws = null;
     }
+  }
+
+  // Priority system methods for active trading pairs
+  addPriorityPair(productId) {
+    this.priorityPairs.add(productId);
+    this.lastPriorityUpdate[productId] = 0; // Reset update timer
+    console.log(`Added ${productId} to priority monitoring. Total priority pairs: ${this.priorityPairs.size}`);
+  }
+
+  removePriorityPair(productId) {
+    this.priorityPairs.delete(productId);
+    delete this.lastPriorityUpdate[productId];
+    console.log(`Removed ${productId} from priority monitoring. Total priority pairs: ${this.priorityPairs.size}`);
+  }
+
+  getPriorityPairs() {
+    return Array.from(this.priorityPairs);
+  }
+
+  isPriorityPair(productId) {
+    return this.priorityPairs.has(productId);
+  }
+
+  clearPriorityPairs() {
+    this.priorityPairs.clear();
+    this.lastPriorityUpdate = {};
+    console.log('Cleared all priority pairs');
+  }
+
+  // Get priority statistics
+  getPriorityStats() {
+    return {
+      totalPriorityPairs: this.priorityPairs.size,
+      priorityPairs: Array.from(this.priorityPairs),
+      updateInterval: this.priorityUpdateInterval,
+      lastUpdates: { ...this.lastPriorityUpdate }
+    };
   }
 }
 

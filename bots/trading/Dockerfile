@@ -10,4 +10,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Run the trading bot
-CMD ["python", "-u", "coinbase_trading_bot.py"]
+CMD ["python", "-u", "coinbase_trade_bot.py"]

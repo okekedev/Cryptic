@@ -103,8 +103,76 @@ app.get("/tickers/:crypto", (req, res) => {
   }
 });
 
+// Priority pair management endpoints for trading system
+app.post("/priority-pairs", (req, res) => {
+  try {
+    const { product_id, action } = req.body;
+
+    if (!product_id || !action) {
+      return res.status(400).json({
+        error: "Missing required fields: product_id and action"
+      });
+    }
+
+    if (action === "add") {
+      wsHandler.addPriorityPair(product_id);
+      res.json({
+        success: true,
+        message: `Added ${product_id} to priority monitoring`,
+        priority_pairs: wsHandler.getPriorityPairs()
+      });
+    } else if (action === "remove") {
+      wsHandler.removePriorityPair(product_id);
+      res.json({
+        success: true,
+        message: `Removed ${product_id} from priority monitoring`,
+        priority_pairs: wsHandler.getPriorityPairs()
+      });
+    } else {
+      res.status(400).json({
+        error: "Invalid action. Use 'add' or 'remove'"
+      });
+    }
+  } catch (error) {
+    console.error("Error managing priority pairs:", error);
+    res.status(500).json({
+      error: "Internal server error",
+      message: error.message
+    });
+  }
+});
+
+app.get("/priority-pairs", (req, res) => {
+  try {
+    const stats = wsHandler.getPriorityStats();
+    res.json(stats);
+  } catch (error) {
+    console.error("Error getting priority pairs:", error);
+    res.status(500).json({
+      error: "Internal server error",
+      message: error.message
+    });
+  }
+});
+
+app.delete("/priority-pairs", (req, res) => {
+  try {
+    wsHandler.clearPriorityPairs();
+    res.json({
+      success: true,
+      message: "Cleared all priority pairs"
+    });
+  } catch (error) {
+    console.error("Error clearing priority pairs:", error);
+    res.status(500).json({
+      error: "Internal server error",
+      message: error.message
+    });
+  }
+});
+
 app.get("/", (req, res) => {
-  res.send("Backend running with ticker streaming");
+  res.send("Backend running with ticker streaming and priority pair management");
 });
 
 // Socket.IO connection handling

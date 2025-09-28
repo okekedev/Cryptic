@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import io from "socket.io-client";
 import "./App.css";
+import NgrokUrl from "./components/NgrokUrl";
 
 function App() {
   const [socket, setSocket] = useState(null);
@@ -80,6 +81,8 @@ function App() {
     <div className="App">
       <header className="App-header">
         <h1>crypto ticker ({Object.keys(cryptoTickers).length} pairs)</h1>
+
+        <NgrokUrl />
 
         <div className="connection-status">
           status:{" "}

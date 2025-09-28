@@ -5,7 +5,9 @@ services:
       target: production
     container_name: bot-frontend-dev
     ports:
-      - "3001:80" # Changed from 80 to 3001
+      - "3001:80"
+    volumes:
+      - ./frontend/nginx.dev.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - backend-dev
     networks:
@@ -16,17 +18,17 @@ services:
     build: ./backend
     container_name: bot-backend-dev
     ports:
-      - "5001:5000" # Changed from 5000 to 5001
+      - "5001:5000"
     volumes:
-      - ./data-dev:/app/data # Separate data volume
+      - ./data-dev:/app/data
     env_file:
       - .env
     environment:
-      - WS_URL=wss://ws-feed.exchange.coinbase.com
-      - USE_ALL_USD_PAIRS=true
-      - VOLUME_THRESHOLD=${VOLUME_THRESHOLD:-1.5}
-      - WINDOW_MINUTES=${WINDOW_MINUTES:-5}
-      - EMIT_RAW_TRADES=${EMIT_RAW_TRADES:-false}
+      WS_URL: wss://advanced-trade-ws.coinbase.com
+      USE_ALL_USD_PAIRS: "true"
+      VOLUME_THRESHOLD: ${VOLUME_THRESHOLD:-1.5}
+      WINDOW_MINUTES: ${WINDOW_MINUTES:-5}
+      EMIT_RAW_TRADES: ${EMIT_RAW_TRADES:-false}
     networks:
       - app-dev-network
     restart: always
@@ -39,16 +41,16 @@ services:
     depends_on:
       - backend-dev
     volumes:
-      - ./data-dev:/app/data # Separate data volume
+      - ./data-dev:/app/data
     env_file:
       - .env
     environment:
-      - BACKEND_URL=http://backend-dev:5000 # Points to backend-dev
-      - PRICE_SPIKE_THRESHOLD=${PRICE_SPIKE_THRESHOLD:-5.0}
-      - PRICE_WINDOW_MINUTES=${PRICE_WINDOW_MINUTES:-5}
-      - WEBHOOK_URL=${WEBHOOK_URL:-}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - DB_PATH=/app/data/spike_alerts.db
+      BACKEND_URL: http://backend-dev:5000
+      PRICE_SPIKE_THRESHOLD: ${PRICE_SPIKE_THRESHOLD:-5.0}
+      PRICE_WINDOW_MINUTES: ${PRICE_WINDOW_MINUTES:-5}
+      WEBHOOK_URL: ${WEBHOOK_URL:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DB_PATH: /app/data/spike_alerts.db
     networks:
       - app-dev-network
     restart: unless-stopped
@@ -61,16 +63,16 @@ services:
     depends_on:
       - backend-dev
     ports:
-      - "8081:8080" # Changed from 8080 to 8081
+      - "8081:8080"
     env_file:
       - .env
     environment:
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-      - ALERTS_CHANNEL_ID=${ALERTS_CHANNEL_ID:-}
-      - BACKEND_URL=http://backend-dev:5000 # Points to backend-dev
-      - WEBHOOK_PORT=8080
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN_DEV}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID_DEV}
+      ALERTS_CHANNEL_ID: ${ALERTS_CHANNEL_ID:-}
+      BACKEND_URL: http://backend-dev:5000
+      WEBHOOK_PORT: "8080"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     networks:
       - app-dev-network
     restart: unless-stopped

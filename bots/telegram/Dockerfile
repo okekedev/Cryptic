@@ -6,8 +6,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the single bot file
-COPY telegram_bot.py .
+# Copy all bot files including trading modules
+COPY *.py .
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1

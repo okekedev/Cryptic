@@ -1,0 +1,70 @@
+.ngrok-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  font-size: 0.9rem;
+  margin-bottom: 12px;
+}
+
+.ngrok-label {
+  color: #888;
+  font-weight: 500;
+}
+
+.ngrok-status {
+  color: #666;
+  font-style: italic;
+}
+
+.ngrok-container.active {
+  background: rgba(0, 150, 255, 0.1);
+  border: 1px solid rgba(0, 150, 255, 0.3);
+}
+
+.ngrok-container.error {
+  background: rgba(255, 50, 50, 0.1);
+  border: 1px solid rgba(255, 50, 50, 0.3);
+}
+
+.ngrok-container.loading {
+  background: rgba(255, 150, 0, 0.1);
+  border: 1px solid rgba(255, 150, 0, 0.3);
+}
+
+.ngrok-url {
+  color: #4a9eff;
+  text-decoration: none;
+  font-family: "Courier New", monospace;
+  font-size: 0.85rem;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.ngrok-url:hover {
+  color: #6fb6ff;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.copy-button {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: all 0.2s ease;
+}
+
+.copy-button:hover {
+  background: rgba(255, 255, 255, 0.2);
+  transform: scale(1.05);
+}
+
+.copy-button:active {
+  transform: scale(0.95);
+}
