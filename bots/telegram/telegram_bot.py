@@ -112,11 +112,18 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Direct Coinbase trading integration\n"
         "• Live position monitoring\n"
         "• Risk management & position sizing\n\n"
-        "📋 *Commands:*\n"
-        "/balance - Check USD balance\n"
+        "📋 *Basic Commands:*\n"
+        "/balance - Check USD balance & reserves\n"
         "/positions - View open positions\n"
         "/orders - View open orders\n"
-        "/status - Check alert status\n"
+        "/status - Check bot status\n\n"
+        "🔧 *Trading Management:*\n"
+        "/limits - View daily trade limits\n"
+        "/emergency_stop - Halt all trading\n"
+        "/edit_order <id> <price> - Edit order\n"
+        "/fills - View recent executions\n"
+        "/trading_stats - Trading statistics\n\n"
+        "⚙️ *System:*\n"
         "/enable - Enable alerts\n"
         "/disable - Disable alerts\n"
         "/test - Send test alert\n"
@@ -126,7 +133,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /balance command"""
+    """Handle /balance command with enhanced reserve information"""
     try:
         balance_info = await trading_manager.get_account_balance('USD')
 
@@ -139,8 +146,12 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         message = (
             f"💰 *Account Balance*\n\n"
-            f"*USD Balance:* {balance_info['formatted']}\n"
-            f"*Available for trading:* ${balance_info['balance'] * 0.99:.2f} (1% reserve)"
+            f"*Total USD:* {balance_info['formatted']}\n"
+            f"*Available for trading:* {balance_info['available_formatted']}\n"
+            f"*Reserve ({trading_manager.reserve_percentage}%):* ${balance_info['reserve']:.2f}\n\n"
+            f"💡 *Position Sizing:*\n"
+            f"*Default:* {trading_manager.default_position_percentage}% of available\n"
+            f"*Max:* {trading_manager.max_position_percentage}% of available"
         )
 
         await update.message.reply_text(message, parse_mode='Markdown')
@@ -292,6 +303,184 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(message, parse_mode='Markdown', reply_markup=reply_markup)
 
 
+async def emergency_stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /emergency_stop command"""
+    try:
+        # Check if this is enabling or disabling
+        args = context.args
+        if args and args[0].lower() in ['off', 'disable', 'false']:
+            result = await trading_manager.emergency_stop_toggle(enable=False)
+        else:
+            result = await trading_manager.emergency_stop_toggle(enable=True)
+
+        await update.message.reply_text(
+            f"{result['message']}\n\n"
+            f"Use `/emergency_stop off` to re-enable trading.",
+            parse_mode='Markdown'
+        )
+
+    except Exception as e:
+        logger.error(f"Error in emergency_stop command: {e}")
+        await update.message.reply_text(
+            "❌ Failed to toggle emergency stop.",
+            parse_mode='Markdown'
+        )
+
+
+async def limits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /limits command - show trading limits and usage"""
+    try:
+        stats = await trading_manager.get_trading_statistics()
+
+        message = (
+            f"📊 *Trading Limits & Usage*\n\n"
+            f"*Daily Trades:* {stats['daily_trades']}/{stats['daily_limit']}\n"
+            f"*Remaining:* {stats['trades_remaining']}\n"
+            f"*Emergency Stop:* {'🚨 ACTIVE' if stats['emergency_stop'] else '✅ Off'}\n\n"
+            f"*Safety Limits:*\n"
+            f"*Reserve:* {stats['reserve_percentage']}% of USD balance\n"
+            f"*Max Position:* {stats['max_position_percentage']}% per trade\n"
+            f"*Min Trade:* ${stats['min_trade_usd']}\n\n"
+            f"💡 Use `/emergency_stop` to halt all trading"
+        )
+
+        await update.message.reply_text(message, parse_mode='Markdown')
+
+    except Exception as e:
+        logger.error(f"Error in limits command: {e}")
+        await update.message.reply_text(
+            "❌ Failed to fetch trading limits.",
+            parse_mode='Markdown'
+        )
+
+
+async def edit_order_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /edit_order command"""
+    try:
+        args = context.args
+        if len(args) < 2:
+            await update.message.reply_text(
+                "❌ Usage: `/edit_order <order_id> <new_price> [new_size]`\n\n"
+                "Example: `/edit_order abc123 45000.50`",
+                parse_mode='Markdown'
+            )
+            return
+
+        order_id = args[0]
+        new_price = args[1] if len(args) > 1 else None
+        new_size = args[2] if len(args) > 2 else None
+
+        # Validate price format
+        try:
+            if new_price:
+                float(new_price)
+            if new_size:
+                float(new_size)
+        except ValueError:
+            await update.message.reply_text(
+                "❌ Invalid price or size format. Use numbers only.",
+                parse_mode='Markdown'
+            )
+            return
+
+        result = await trading_manager.edit_order(order_id, new_price, new_size)
+
+        if result['success']:
+            message = (
+                f"✅ *Order Edited*\n\n"
+                f"*Order ID:* {order_id[:8]}...\n"
+                f"*New Price:* ${float(new_price):,.6f}" + (f"\n*New Size:* {new_size}" if new_size else "")
+            )
+        else:
+            message = f"❌ {result['message']}"
+
+        await update.message.reply_text(message, parse_mode='Markdown')
+
+    except Exception as e:
+        logger.error(f"Error in edit_order command: {e}")
+        await update.message.reply_text(
+            "❌ Failed to edit order.",
+            parse_mode='Markdown'
+        )
+
+
+async def fills_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /fills command - show recent trade executions"""
+    try:
+        args = context.args
+        order_id = args[0] if args else None
+
+        fills = await trading_manager.get_fills(order_id=order_id, limit=10)
+
+        if not fills:
+            await update.message.reply_text(
+                "📊 *Recent Fills*\n\nNo recent trade executions found.",
+                parse_mode='Markdown'
+            )
+            return
+
+        message = "📊 *Recent Fills*\n\n"
+        for fill in fills[:5]:  # Show last 5 fills
+            trade_time = fill['trade_time'][:19].replace('T', ' ') if fill['trade_time'] else 'Unknown'
+            message += (
+                f"*{fill['product_id']}* - {fill['side']}\n"
+                f"Size: {float(fill['size']):.8f}\n"
+                f"Price: ${float(fill['price']):,.6f}\n"
+                f"Fee: ${float(fill['fee']):.6f}\n"
+                f"Time: {trade_time}\n\n"
+            )
+
+        keyboard = [
+            [InlineKeyboardButton("🔄 Refresh", callback_data="refresh_fills")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(message, parse_mode='Markdown', reply_markup=reply_markup)
+
+    except Exception as e:
+        logger.error(f"Error in fills command: {e}")
+        await update.message.reply_text(
+            "❌ Failed to fetch trade fills.",
+            parse_mode='Markdown'
+        )
+
+
+async def trading_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /trading_stats command"""
+    try:
+        stats = await trading_manager.get_trading_statistics()
+
+        # Get recent fills for additional stats
+        fills = await trading_manager.get_fills(limit=20)
+
+        total_volume = sum(float(fill['size']) * float(fill['price']) for fill in fills if fill['side'] == 'BUY')
+        total_fees = sum(float(fill['fee']) for fill in fills)
+
+        message = (
+            f"📈 *Trading Statistics*\n\n"
+            f"*Today:*\n"
+            f"Trades: {stats['daily_trades']}/{stats['daily_limit']}\n"
+            f"Remaining: {stats['trades_remaining']}\n\n"
+            f"*Recent Activity (last 20 fills):*\n"
+            f"Total Volume: ${total_volume:,.2f}\n"
+            f"Total Fees: ${total_fees:,.6f}\n"
+            f"Executions: {len(fills)}\n\n"
+            f"*Safety Status:*\n"
+            f"Emergency Stop: {'🚨 ACTIVE' if stats['emergency_stop'] else '✅ Off'}\n"
+            f"Reserve: {stats['reserve_percentage']}%\n"
+            f"Max Position: {stats['max_position_percentage']}%"
+        )
+
+        await update.message.reply_text(message, parse_mode='Markdown')
+
+    except Exception as e:
+        logger.error(f"Error in trading_stats command: {e}")
+        await update.message.reply_text(
+            "❌ Failed to fetch trading statistics.",
+            parse_mode='Markdown'
+        )
+
+
 # Callback query handlers for inline buttons
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle inline button callbacks"""
@@ -342,6 +531,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "refresh_orders":
             await orders_command(update, context)
 
+        elif data == "refresh_fills":
+            await fills_command(update, context)
+
         else:
             await query.edit_message_text("❌ Unknown action")
 
@@ -365,8 +557,8 @@ async def handle_buy_request(query, product_id: str, chat_id: str):
             await query.edit_message_text(f"❌ Error getting product info: {product_info['error']}")
             return
 
-        # Calculate position size
-        position_calc = trading_manager.calculate_position_size(balance_info['balance'])
+        # Calculate position size using available trading balance (after reserve)
+        position_calc = trading_manager.calculate_position_size(balance_info['available_trading'])
 
         if not position_calc['valid']:
             await query.edit_message_text(f"❌ {position_calc['error']}")
@@ -700,6 +892,13 @@ def main() -> None:
     application.add_handler(CommandHandler("enable", enable_command))
     application.add_handler(CommandHandler("disable", disable_command))
     application.add_handler(CommandHandler("test", test_command))
+
+    # Enhanced trading commands
+    application.add_handler(CommandHandler("emergency_stop", emergency_stop_command))
+    application.add_handler(CommandHandler("limits", limits_command))
+    application.add_handler(CommandHandler("edit_order", edit_order_command))
+    application.add_handler(CommandHandler("fills", fills_command))
+    application.add_handler(CommandHandler("trading_stats", trading_stats_command))
 
     # Add callback query handler for inline buttons
     application.add_handler(CallbackQueryHandler(button_callback))

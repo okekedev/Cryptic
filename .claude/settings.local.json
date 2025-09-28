@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker logs:*)",
+      "Bash(docker-compose:*)",
+      "WebFetch(domain:docs.cdp.coinbase.com)",
+      "WebSearch",
+      "WebFetch(domain:docs.cloud.coinbase.com)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

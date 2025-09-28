@@ -3,6 +3,7 @@ services:
     build:
       context: ./frontend
       target: production
+    container_name: bot-frontend
     ports:
       - "80:80"
     depends_on:
@@ -13,6 +14,7 @@ services:
 
   backend:
     build: ./backend
+    container_name: bot-backend
     ports:
       - "5000:5000"
     volumes:
@@ -20,11 +22,11 @@ services:
     env_file:
       - .env
     environment:
-      - WS_URL=wss://advanced-trade-ws.coinbase.com
-      - USE_ALL_USD_PAIRS=true
-      - VOLUME_THRESHOLD=${VOLUME_THRESHOLD:-1.5}
-      - WINDOW_MINUTES=${WINDOW_MINUTES:-5}
-      - EMIT_RAW_TRADES=${EMIT_RAW_TRADES:-false}
+      WS_URL: wss://advanced-trade-ws.coinbase.com
+      USE_ALL_USD_PAIRS: "true"
+      VOLUME_THRESHOLD: ${VOLUME_THRESHOLD:-1.5}
+      WINDOW_MINUTES: ${WINDOW_MINUTES:-5}
+      EMIT_RAW_TRADES: ${EMIT_RAW_TRADES:-false}
     networks:
       - app-network
     restart: always
@@ -33,6 +35,7 @@ services:
     build:
       context: ./bots/spike-detector
       dockerfile: Dockerfile
+    container_name: bot-spike-detector
     depends_on:
       - backend
     volumes:
@@ -40,12 +43,12 @@ services:
     env_file:
       - .env
     environment:
-      - BACKEND_URL=http://backend:5000
-      - PRICE_SPIKE_THRESHOLD=${PRICE_SPIKE_THRESHOLD:-5.0}
-      - PRICE_WINDOW_MINUTES=${PRICE_WINDOW_MINUTES:-5}
-      - WEBHOOK_URL=${WEBHOOK_URL:-}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - DB_PATH=/app/data/spike_alerts.db
+      BACKEND_URL: http://backend:5000
+      PRICE_SPIKE_THRESHOLD: ${PRICE_SPIKE_THRESHOLD:-5.0}
+      PRICE_WINDOW_MINUTES: ${PRICE_WINDOW_MINUTES:-5}
+      WEBHOOK_URL: ${WEBHOOK_URL:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DB_PATH: /app/data/spike_alerts.db
     networks:
       - app-network
     restart: unless-stopped
@@ -54,6 +57,7 @@ services:
     build:
       context: ./bots/telegram
       dockerfile: Dockerfile
+    container_name: bot-telegram-bot
     depends_on:
       - backend
     ports:
@@ -61,18 +65,19 @@ services:
     env_file:
       - .env
     environment:
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-      - ALERTS_CHANNEL_ID=${ALERTS_CHANNEL_ID:-}
-      - BACKEND_URL=http://backend:5000
-      - WEBHOOK_PORT=8080
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      ALERTS_CHANNEL_ID: ${ALERTS_CHANNEL_ID:-}
+      BACKEND_URL: http://backend:5000
+      WEBHOOK_PORT: "8080"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     networks:
       - app-network
     restart: unless-stopped
 
   trading-bot:
     build: ./bots/trading
+    container_name: bot-trading-bot
     env_file:
       - .env
     networks:
@@ -81,11 +86,12 @@ services:
 
   ngrok:
     image: ngrok/ngrok:alpine
+    container_name: bot-ngrok
     command: http frontend:80
     ports:
       - "4040:4040"
     environment:
-      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
     depends_on:
       - frontend
     networks:
@@ -118,6 +124,7 @@ services:
 networks:
   app-network:
     driver: bridge
+    name: bot-network
 
 volumes:
   data:

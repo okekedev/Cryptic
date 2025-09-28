@@ -187,6 +187,17 @@ io.on("connection", (socket) => {
     }
   });
 
+  // Handle spike alerts from spike detector bot
+  socket.on("spike_alert", (alertData) => {
+    console.log(`📢 Relaying spike alert: ${alertData.symbol} ${alertData.event_type || 'spike'}`);
+
+    // Broadcast the spike alert to all other connected clients (except sender)
+    socket.broadcast.emit("spike_alert", alertData);
+
+    // Also log the alert for debugging
+    console.log(`Spike alert broadcasted: ${JSON.stringify(alertData).substring(0, 200)}`);
+  });
+
   socket.on("disconnect", () => {
     console.log("Client disconnected:", socket.id);
   });
