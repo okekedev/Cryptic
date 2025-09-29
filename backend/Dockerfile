@@ -26,5 +26,5 @@ RUN mkdir -p /app/data
 # Expose port
 EXPOSE 5000
 
-# Run the enhanced application with multi-connection support
-CMD ["node", "src/index_enhanced.js"]
+# Run the application with multi-connection support
+CMD ["node", "src/index.js"]

@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git checkout:*)",
+      "Bash(cp:*)",
+      "Bash(docker-compose start:*)",
+      "Bash(docker-compose logs:*)",
+      "Bash(docker-compose exec backend ls:*)",
+      "Bash(docker-compose exec backend head:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
