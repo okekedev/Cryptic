@@ -256,6 +256,13 @@ io.on("connection", (socket) => {
     }
   });
 
+  // Handle spike_alert events from spike-detector and broadcast to all clients
+  socket.on("spike_alert", (data) => {
+    console.log(`📢 Received spike alert from ${socket.id}:`, data.symbol, data.event_type);
+    // Broadcast to all connected clients (including telegram-bot)
+    io.emit("spike_alert", data);
+  });
+
   socket.on("disconnect", () => {
     console.log("Client disconnected:", socket.id);
   });
