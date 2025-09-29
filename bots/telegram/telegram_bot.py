@@ -68,6 +68,7 @@ def format_price_alert(data):
             timestamp_str = f"*time:* {data['timestamp']}\n"
 
     if data.get('event_type') == 'momentum_end':
+        # Momentum ended - no trading buttons needed
         return (
             f"{emoji} *MOMENTUM ENDED* {emoji}\n\n"
             f"*Symbol:* {data['symbol']}\n"
@@ -75,24 +76,26 @@ def format_price_alert(data):
             f"*Exit at:* {data['exit_change']:.2f}%\n"
             f"*Peak price:* ${data['peak_price']:.6f}\n"
             f"*Exit price:* ${data['new_price']:.6f}\n"
-            f"*Duration:* {data['time_span_seconds']/60:.1f} min"
+            f"*Duration:* {data['time_span_seconds']/60:.1f} min\n"
             f"{timestamp_str}"
         ), None
     else:
+        # All other spike alerts (pump/dump) - include trading buttons
         message = (
             f"{emoji} *PRICE {data['spike_type'].upper()} ALERT* {emoji}\n\n"
             f"*Symbol:* {data['symbol']}\n"
             f"*Change:* {data['pct_change']:.2f}%\n"
             f"*Price:* ${data['old_price']:.6f} → ${data['new_price']:.6f}\n"
-            f"*Time span:* {data['time_span_seconds']:.0f}s"
+            f"*Time span:* {data['time_span_seconds']:.0f}s\n"
             f"{timestamp_str}"
         )
 
-        # Create inline keyboard for trading actions
+        # Create inline keyboard for all pump/dump alerts
+        chart_url = f"https://www.coinbase.com/advanced-trade/spot/{data['symbol']}"
         keyboard = [
             [
                 InlineKeyboardButton("🚀 Buy", callback_data=f"buy:{data['symbol']}"),
-                InlineKeyboardButton("📊 Chart", callback_data=f"chart:{data['symbol']}")
+                InlineKeyboardButton("📊 Chart", url=chart_url)
             ],
             [
                 InlineKeyboardButton("👁️ Ignore", callback_data=f"ignore:{data['symbol']}")
@@ -306,10 +309,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             product_id = data.split(":", 1)[1]
             await handle_buy_request(query, product_id, chat_id)
 
-        elif data.startswith("chart:"):
-            product_id = data.split(":", 1)[1]
-            await handle_chart_request(query, product_id)
-
         elif data.startswith("ignore:"):
             product_id = data.split(":", 1)[1]
             await handle_ignore_request(query, product_id)
@@ -450,7 +449,7 @@ async def handle_buy_confirmation(query, product_id: str, amount: str, chat_id: 
 
 async def handle_chart_request(query, product_id: str):
     """Handle chart button click"""
-    chart_url = f"https://www.tradingview.com/chart/?symbol=COINBASE:{product_id.replace('-', '')}"
+    chart_url = f"https://www.coinbase.com/advanced-trade/spot/{product_id}"
 
     keyboard = [
         [InlineKeyboardButton("📊 View Chart", url=chart_url)]
@@ -458,7 +457,7 @@ async def handle_chart_request(query, product_id: str):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await query.edit_message_text(
-        f"📈 *Chart for {product_id}*\n\nClick the button below to view the chart on TradingView.",
+        f"📈 *Chart for {product_id}*\n\nClick the button below to view the chart on Coinbase.",
         parse_mode='Markdown',
         reply_markup=reply_markup
     )

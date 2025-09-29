@@ -13,7 +13,7 @@ import socketio
 from enhanced_price_tracker import EnhancedPriceTracker
 
 # Configuration from environment variables
-BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:3000")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:5000")
 PRICE_SPIKE_THRESHOLD = float(os.getenv("PRICE_SPIKE_THRESHOLD", "5.0"))
 PRICE_WINDOW_MINUTES = int(os.getenv("PRICE_WINDOW_MINUTES", "5"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")

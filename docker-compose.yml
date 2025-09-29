@@ -71,13 +71,14 @@ services:
       - app-network
     restart: unless-stopped
 
-  trading-bot:
-    build: ./bots/trading
-    env_file:
-      - .env
-    networks:
-      - app-network
-    restart: always
+  # trading-bot: Disabled - telegram-bot handles trading directly via TradingManager
+  # trading-bot:
+  #   build: ./bots/trading
+  #   env_file:
+  #     - .env
+  #   networks:
+  #     - app-network
+  #   restart: always
 
   ngrok:
     image: ngrok/ngrok:alpine

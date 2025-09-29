@@ -4,8 +4,10 @@
   "description": "Backend for crypto trading alerts with real-time ticker streaming",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "nodemon src/index.js"
+    "start": "node src/index_enhanced.js",
+    "start:single": "node src/index.js",
+    "dev": "nodemon src/index_enhanced.js",
+    "dev:single": "nodemon src/index.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
