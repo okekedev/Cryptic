@@ -17,8 +17,8 @@ RUN npm install --only=production && npm cache clean --force
 COPY src/ ./src/
 
 # Install Python dependencies for enhanced WebSocket handler
-COPY src/requirements_multi_ws.txt ./src/
-RUN pip3 install --no-cache-dir --break-system-packages -r src/requirements_multi_ws.txt
+COPY src/websocket-python/requirements_multi_ws.txt ./src/websocket-python/
+RUN pip3 install --no-cache-dir --break-system-packages -r src/websocket-python/requirements_multi_ws.txt
 
 # Create data directory
 RUN mkdir -p /app/data

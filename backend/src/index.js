@@ -47,7 +47,7 @@ const currentTickers = {};
 
 // Start Python WebSocket handler process
 function startPythonWebSocketHandler() {
-  const pythonScript = path.join(__dirname, 'python_ws_bridge.py');
+  const pythonScript = path.join(__dirname, 'websocket-python', 'python_ws_bridge.py');
 
   const env = {
     ...process.env,
