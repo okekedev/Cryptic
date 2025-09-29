@@ -80,6 +80,31 @@ services:
   #     - app-network
   #   restart: always
 
+  paper-trading:
+    build:
+      context: ./bots/paper-trading
+      dockerfile: Dockerfile
+    depends_on:
+      - backend
+      - spike-detector
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      - BACKEND_URL=http://backend:5000
+      - INITIAL_CAPITAL=${INITIAL_CAPITAL:-10000.0}
+      - POSITION_SIZE_PERCENT=${POSITION_SIZE_PERCENT:-10.0}
+      - MIN_PROFIT_TARGET=${MIN_PROFIT_TARGET:-3.0}
+      - TRAILING_THRESHOLD=${TRAILING_THRESHOLD:-1.5}
+      - BUY_FEE_PERCENT=${BUY_FEE_PERCENT:-0.6}
+      - SELL_FEE_PERCENT=${SELL_FEE_PERCENT:-0.6}
+      - DB_PATH=/app/data/paper_trading.db
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    networks:
+      - app-network
+    restart: unless-stopped
+
   ngrok:
     image: ngrok/ngrok:alpine
     command: http frontend:80
