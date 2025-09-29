@@ -38,12 +38,14 @@ services:
     container_name: bot-spike-detector
     depends_on:
       - backend
+      - telegram-bot  # Direct dependency for socket connection
     volumes:
       - ./data:/app/data
     env_file:
       - .env
     environment:
       BACKEND_URL: http://backend:5000
+      TELEGRAM_SOCKET_URL: http://telegram-bot:8081  # Direct connection to telegram bot
       PRICE_SPIKE_THRESHOLD: ${PRICE_SPIKE_THRESHOLD:-5.0}
       PRICE_WINDOW_MINUTES: ${PRICE_WINDOW_MINUTES:-5}
       WEBHOOK_URL: ${WEBHOOK_URL:-}
@@ -61,7 +63,8 @@ services:
     depends_on:
       - backend
     ports:
-      - "8080:8080"
+      - "8080:8080"  # Webhook server
+      - "8081:8081"  # Direct Socket.IO server for spike alerts
     env_file:
       - .env
     environment:
@@ -70,6 +73,7 @@ services:
       ALERTS_CHANNEL_ID: ${ALERTS_CHANNEL_ID:-}
       BACKEND_URL: http://backend:5000
       WEBHOOK_PORT: "8080"
+      SPIKE_SOCKET_PORT: "8081"
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     networks:
       - app-network

@@ -14,6 +14,7 @@ from enhanced_price_tracker import EnhancedPriceTracker
 
 # Configuration from environment variables
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:3000")
+TELEGRAM_SOCKET_URL = os.getenv("TELEGRAM_SOCKET_URL", "http://telegram-bot:8081")
 PRICE_SPIKE_THRESHOLD = float(os.getenv("PRICE_SPIKE_THRESHOLD", "5.0"))
 PRICE_WINDOW_MINUTES = int(os.getenv("PRICE_WINDOW_MINUTES", "5"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
@@ -156,7 +157,8 @@ class PriceSpikeBot:
         self.running = True
         self.reconnect_delay = 1
         self.max_reconnect_delay = 60
-        self.sio = None  # Initialize sio as None
+        self.backend_sio = None  # Socket.IO client for backend price data
+        self.telegram_sio = None  # Socket.IO client for direct telegram alerts
         # Initialize SQLite database
         db_path = os.getenv("DB_PATH", "/app/data/spike_alerts.db")
         try:
@@ -242,7 +244,7 @@ class PriceSpikeBot:
     def send_alert(self, spike_data: dict):
         """Send spike alert via multiple channels and store in DB"""
         event_type = spike_data.get('event_type', 'spike')
-        
+
         if event_type == 'spike_start':
             alert_msg = (
                 f"🚨 PRICE {spike_data['spike_type'].upper()} ALERT 🚨\n"
@@ -271,18 +273,24 @@ class PriceSpikeBot:
                 f"Time span: {spike_data['time_span_seconds']:.0f}s\n"
                 f"Time: {spike_data['timestamp']}"
             )
-        
+
         # Console logging
         logger.warning(alert_msg)
-        
-        # Emit via Socket.IO to all connected clients
-        if hasattr(self, 'sio') and self.sio and self.sio.connected:
+
+        # Emit DIRECTLY to telegram bot via dedicated Socket.IO connection
+        if hasattr(self, 'telegram_sio') and self.telegram_sio and self.telegram_sio.connected:
             try:
-                # Emit the spike_alert event that telegram-bot is listening for
-                self.sio.emit('spike_alert', spike_data)
-                logger.info(f"Alert emitted via Socket.IO: {spike_data['symbol']} {event_type}")
+                self.telegram_sio.emit('spike_alert', spike_data)
+                logger.info(f"⚡ Alert sent directly to Telegram: {spike_data['symbol']} {event_type}")
             except Exception as e:
-                logger.error(f"Failed to emit Socket.IO event: {e}")
+                logger.error(f"Failed to emit direct alert to Telegram: {e}")
+                # Fallback: try backend relay if direct connection fails
+                if hasattr(self, 'backend_sio') and self.backend_sio and self.backend_sio.connected:
+                    try:
+                        self.backend_sio.emit('spike_alert', spike_data)
+                        logger.info(f"Alert sent via backend relay (fallback): {spike_data['symbol']} {event_type}")
+                    except Exception as e2:
+                        logger.error(f"Failed to emit via backend relay: {e2}")
         
         if WEBHOOK_URL:
             try:
@@ -337,19 +345,20 @@ class PriceSpikeBot:
         #     logger.debug(f"Failed to send to backend: {e}")
 
     def connect_websocket(self):
-        """Connect to backend Socket.IO WebSocket"""
-        self.sio = socketio.Client(logger=False, engineio_logger=False)
-        
-        @self.sio.event
+        """Connect to both backend (for prices) and telegram bot (for alerts)"""
+        # Initialize backend Socket.IO client for price data
+        self.backend_sio = socketio.Client(logger=False, engineio_logger=False)
+
+        @self.backend_sio.event
         def connect():
-            logger.info("Connected to backend Socket.IO")
+            logger.info(f"✅ Connected to backend for price data: {BACKEND_URL}")
             self.reconnect_delay = 1
-            
-        @self.sio.event
+
+        @self.backend_sio.event
         def disconnect():
-            logger.warning("Disconnected from backend")
-            
-        @self.sio.on('ticker_update')
+            logger.warning("❌ Disconnected from backend")
+
+        @self.backend_sio.on('ticker_update')
         def on_ticker_update(data):
             try:
                 symbol = data['crypto']
@@ -365,13 +374,53 @@ class PriceSpikeBot:
                     self.send_alert(spike)
             except Exception as e:
                 logger.error(f"Error processing ticker: {e}")
-        
+
+        # Initialize direct telegram Socket.IO client for alerts
+        self.telegram_sio = socketio.Client(logger=False, engineio_logger=False)
+
+        @self.telegram_sio.event
+        def connect():
+            logger.info(f"⚡ Connected directly to Telegram bot: {TELEGRAM_SOCKET_URL}")
+            # Send ping to test connection
+            self.telegram_sio.emit('ping', {'timestamp': time.time()})
+
+        @self.telegram_sio.event
+        def disconnect():
+            logger.warning("❌ Disconnected from Telegram bot")
+
+        @self.telegram_sio.on('connection_ack')
+        def on_connection_ack(data):
+            logger.info(f"📡 Telegram bot acknowledged: {data.get('message', 'Connected')}")
+
+        @self.telegram_sio.on('alert_received')
+        def on_alert_received(data):
+            if data.get('status') == 'success':
+                logger.debug(f"✓ Alert confirmed by Telegram: {data.get('symbol')}")
+            else:
+                logger.error(f"Alert error from Telegram: {data.get('message')}")
+
+        @self.telegram_sio.on('pong')
+        def on_pong(data):
+            logger.info(f"🏓 Pong from Telegram - Connected clients: {data.get('connected_clients', 0)}")
+
+        # Connection loop
         while self.running:
             try:
-                self.sio.connect(BACKEND_URL)
-                self.sio.wait()
+                # Connect to backend for price data
+                if not self.backend_sio.connected:
+                    logger.info(f"Connecting to backend: {BACKEND_URL}")
+                    self.backend_sio.connect(BACKEND_URL)
+
+                # Connect to telegram for direct alerts
+                if not self.telegram_sio.connected:
+                    logger.info(f"Connecting directly to Telegram bot: {TELEGRAM_SOCKET_URL}")
+                    self.telegram_sio.connect(TELEGRAM_SOCKET_URL)
+
+                # Wait for backend events (main loop)
+                self.backend_sio.wait()
+
             except Exception as e:
-                logger.error(f"Connection failed: {e}")
+                logger.error(f"Connection error: {e}")
                 time.sleep(self.reconnect_delay)
                 self.reconnect_delay = min(self.reconnect_delay * 2, self.max_reconnect_delay)
 
@@ -381,6 +430,7 @@ class PriceSpikeBot:
         logger.info(f"Threshold: {PRICE_SPIKE_THRESHOLD}%")
         logger.info(f"Window: {PRICE_WINDOW_MINUTES} minutes")
         logger.info(f"Backend: {BACKEND_URL}")
+        logger.info(f"Telegram Direct: {TELEGRAM_SOCKET_URL}")
         logger.info(f"Database: {self.db_path}")
         try:
             stats = self.get_stats(24)
@@ -392,9 +442,20 @@ class PriceSpikeBot:
     def stop(self):
         """Gracefully stop the bot"""
         self.running = False
+
+        # Disconnect Socket.IO clients
+        if hasattr(self, 'backend_sio') and self.backend_sio:
+            self.backend_sio.disconnect()
+            logger.info("Disconnected from backend")
+
+        if hasattr(self, 'telegram_sio') and self.telegram_sio:
+            self.telegram_sio.disconnect()
+            logger.info("Disconnected from Telegram bot")
+
         if hasattr(self, 'db') and self.db:
             self.db.close()
             logger.info("Database connection closed")
+
         logger.info("Bot stopping...")
 
 def main():

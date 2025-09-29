@@ -12,7 +12,7 @@ import json
 # Import our trading components
 from trading_manager import TradingManager
 from price_monitor import PriceMonitor
-from spike_alert_listener import SpikeAlertListener
+from socket_server import SpikeAlertSocketServer
 
 # Custom filter to block getUpdates logs
 class IgnoreGetUpdatesFilter(logging.Filter):
@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "8080"))
+SPIKE_SOCKET_PORT = int(os.getenv("SPIKE_SOCKET_PORT", "8081"))
 ALERTS_CHANNEL_ID = os.getenv("ALERTS_CHANNEL_ID", "")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:5000")
 
@@ -49,7 +50,7 @@ application = None
 alerts_enabled = True
 trading_manager = None
 price_monitor = None
-spike_listener = None
+spike_socket_server = None
 
 # User preferences for trading
 DEFAULT_POSITION_PERCENTAGE = float(os.getenv('DEFAULT_POSITION_PERCENTAGE', '2.0'))
@@ -794,7 +795,7 @@ async def start_webhook_server(app: Application):
 
 async def post_init(app: Application) -> None:
     """Initialize bot after startup"""
-    global trading_manager, price_monitor, spike_listener
+    global trading_manager, price_monitor, spike_socket_server
 
     try:
         # Initialize trading manager
@@ -812,18 +813,18 @@ async def post_init(app: Application) -> None:
         trading_manager = None
         price_monitor = None
 
-    # Initialize spike alert listener
+    # Initialize direct spike alert Socket.IO server
     try:
         async def spike_alert_callback(data):
             """Callback for spike alerts"""
             await send_alert(app.bot, data)
 
-        spike_listener = SpikeAlertListener(BACKEND_URL, spike_alert_callback)
-        await spike_listener.start()
-        logger.info("✅ Spike Alert Listener initialized")
+        spike_socket_server = SpikeAlertSocketServer(spike_alert_callback)
+        app.bot_data['spike_server'] = await spike_socket_server.start(port=SPIKE_SOCKET_PORT)
+        logger.info(f"✅ Direct Spike Alert Socket Server initialized on port {SPIKE_SOCKET_PORT}")
     except Exception as e:
-        logger.error(f"Failed to initialize spike alert listener: {e}")
-        spike_listener = None
+        logger.error(f"Failed to initialize spike alert socket server: {e}")
+        spike_socket_server = None
 
     # Start webhook server
     app.bot_data['webhook_runner'] = await start_webhook_server(app)
@@ -839,10 +840,10 @@ async def post_init(app: Application) -> None:
             else:
                 status_msg += "❌ Trading: Disabled (Check API credentials)\n"
 
-            if spike_listener:
-                status_msg += "✅ Spike Alerts: Listening"
+            if spike_socket_server:
+                status_msg += f"✅ Spike Alerts: Direct server on port {SPIKE_SOCKET_PORT}"
             else:
-                status_msg += "❌ Spike Alerts: Disconnected"
+                status_msg += "❌ Spike Alerts: Server not started"
 
             await app.bot.send_message(
                 chat_id=TELEGRAM_CHAT_ID,
@@ -858,11 +859,11 @@ async def shutdown(app: Application) -> None:
     if 'webhook_runner' in app.bot_data:
         await app.bot_data['webhook_runner'].cleanup()
 
+    if 'spike_server' in app.bot_data:
+        await app.bot_data['spike_server'].cleanup()
+
     if price_monitor:
         await price_monitor.stop()
-
-    if spike_listener:
-        await spike_listener.stop()
 
     logger.info("Bot shutdown complete")
 
