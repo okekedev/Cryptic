@@ -24,8 +24,10 @@ INITIAL_CAPITAL = float(os.getenv("INITIAL_CAPITAL", "10000.0"))  # $10,000 star
 POSITION_SIZE_PERCENT = float(os.getenv("POSITION_SIZE_PERCENT", "10.0"))  # 10% per trade
 MIN_PROFIT_TARGET = float(os.getenv("MIN_PROFIT_TARGET", "3.0"))  # 3% minimum profit
 TRAILING_THRESHOLD = float(os.getenv("TRAILING_THRESHOLD", "1.5"))  # Drop 1.5% from peak to exit
-BUY_FEE_PERCENT = float(os.getenv("BUY_FEE_PERCENT", "0.6"))  # Coinbase taker fee
-SELL_FEE_PERCENT = float(os.getenv("SELL_FEE_PERCENT", "0.6"))  # Coinbase taker fee
+MIN_HOLD_TIME_MINUTES = float(os.getenv("MIN_HOLD_TIME_MINUTES", "30.0"))  # Minimum 30 min hold time
+STOP_LOSS_PERCENT = float(os.getenv("STOP_LOSS_PERCENT", "5.0"))  # 5% stop loss
+BUY_FEE_PERCENT = float(os.getenv("BUY_FEE_PERCENT", "0.6"))  # Coinbase Advanced Trade taker fee
+SELL_FEE_PERCENT = float(os.getenv("SELL_FEE_PERCENT", "0.4"))  # Coinbase Advanced Trade maker fee
 DB_PATH = os.getenv("DB_PATH", "/app/data/paper_trading.db")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
@@ -61,9 +63,34 @@ class Position:
             return True
         return False
 
-    def should_exit(self, current_price: float) -> bool:
-        """Check if position should be exited"""
-        return current_price <= self.trailing_exit_price
+    def should_exit(self, current_price: float) -> tuple[bool, str]:
+        """Check if position should be exited. Returns (should_exit, reason)"""
+        # Calculate time held
+        entry_time = datetime.fromisoformat(self.entry_time)
+        time_held_minutes = (datetime.now() - entry_time).total_seconds() / 60
+
+        # Calculate current P&L percentage
+        current_value = current_price * self.quantity
+        pnl_percent = ((current_value - self.cost_basis) / self.cost_basis) * 100
+
+        # STOP LOSS: Exit immediately if down 5% or more
+        if pnl_percent <= -STOP_LOSS_PERCENT:
+            return True, f"Stop loss hit ({pnl_percent:.2f}%)"
+
+        # PROFIT TARGET MET: Use trailing stop if price reached min profit target
+        if current_price >= self.min_exit_price:
+            if current_price <= self.trailing_exit_price:
+                return True, f"Trailing stop hit (profit secured)"
+
+        # MINIMUM HOLD TIME: Don't exit before 30 minutes unless stop loss
+        if time_held_minutes < MIN_HOLD_TIME_MINUTES:
+            return False, ""
+
+        # AFTER 30 MIN: Exit if below trailing stop OR at any profit
+        if current_price <= self.trailing_exit_price or pnl_percent > 0:
+            return True, f"Min hold time reached ({time_held_minutes:.1f} min)"
+
+        return False, ""
 
     def calculate_pnl(self, exit_price: float) -> Dict:
         """Calculate profit/loss for this position"""
@@ -102,6 +129,8 @@ class PaperTradingBot:
         logger.info(f"Position Size: {POSITION_SIZE_PERCENT}% per trade")
         logger.info(f"Min Profit Target: {MIN_PROFIT_TARGET}%")
         logger.info(f"Trailing Threshold: {TRAILING_THRESHOLD}%")
+        logger.info(f"Min Hold Time: {MIN_HOLD_TIME_MINUTES} minutes")
+        logger.info(f"Stop Loss: {STOP_LOSS_PERCENT}%")
         logger.info(f"Buy Fee: {BUY_FEE_PERCENT}%")
         logger.info(f"Sell Fee: {SELL_FEE_PERCENT}%")
         logger.info("=" * 60)
@@ -229,8 +258,9 @@ class PaperTradingBot:
                        f"Trailing exit now at ${position.trailing_exit_price:.6f}")
 
         # Check if we should exit
-        if position.should_exit(current_price):
-            self.close_position(symbol, current_price, "Trailing stop hit")
+        should_exit, exit_reason = position.should_exit(current_price)
+        if should_exit:
+            self.close_position(symbol, current_price, exit_reason)
 
     def close_position(self, symbol: str, exit_price: float, reason: str):
         """Close an open position"""

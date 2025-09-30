@@ -13,14 +13,13 @@ import socketio
 from enhanced_price_tracker import EnhancedPriceTracker
 
 # Configuration from environment variables
-<<<<<<< HEAD
-BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:3000")
-TELEGRAM_SOCKET_URL = os.getenv("TELEGRAM_SOCKET_URL", "http://telegram-bot:8081")
-=======
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:5000")
->>>>>>> 11ac33eb168ae508ae96b77998a11f2e593c1e87
+TELEGRAM_SOCKET_URL = os.getenv("TELEGRAM_SOCKET_URL", "http://telegram-bot:8081")
 PRICE_SPIKE_THRESHOLD = float(os.getenv("PRICE_SPIKE_THRESHOLD", "5.0"))
 PRICE_WINDOW_MINUTES = int(os.getenv("PRICE_WINDOW_MINUTES", "5"))
+MOMENTUM_EXIT_MULTIPLIER = float(os.getenv("MOMENTUM_EXIT_MULTIPLIER", "0.6"))  # Exit at 60% of spike threshold
+TRACKER_CLEANUP_HOURS = int(os.getenv("TRACKER_CLEANUP_HOURS", "1"))  # Cleanup inactive trackers after 1 hour
+MAX_PRICE_MULTIPLIER = float(os.getenv("MAX_PRICE_MULTIPLIER", "10.0"))  # Max 10x price jump (data validation)
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
@@ -39,8 +38,10 @@ class PriceTracker:
         self.threshold = threshold
         self.price_history: Deque[Tuple[float, float]] = deque()  # (timestamp, price)
         self.last_spike_time = 0
+        self.last_update_time = time.time()  # Track last activity for cleanup
         self.cooldown_seconds = 60  # Avoid spamming alerts
-        
+        self.last_price = 0  # Track last price for validation
+
         # Momentum tracking
         self.momentum_tracking = False
         self.momentum_start_price = 0
@@ -51,11 +52,25 @@ class PriceTracker:
 
     def add_price(self, price: float, timestamp: float) -> Optional[dict]:
         """Add price to history and check for spike"""
+        # Update last activity time
+        self.last_update_time = timestamp
+
+        # Validate price
+        if price <= 0:
+            logger.warning(f"{self.symbol}: Invalid price {price} (must be > 0)")
+            return None
+
+        # Check for extreme price jumps (likely bad data)
+        if self.last_price > 0 and price > self.last_price * MAX_PRICE_MULTIPLIER:
+            logger.warning(f"{self.symbol}: Rejected price {price} (>{MAX_PRICE_MULTIPLIER}x jump from {self.last_price})")
+            return None
+
+        self.last_price = price
         self.price_history.append((timestamp, price))
         cutoff_time = timestamp - self.window_seconds
         while self.price_history and self.price_history[0][0] < cutoff_time:
             self.price_history.popleft()
-        
+
         if len(self.price_history) < 2:
             return None
         
@@ -100,16 +115,18 @@ class PriceTracker:
         """Track momentum after initial spike"""
         # Calculate current change from start
         current_change = ((current_price - self.momentum_start_price) / self.momentum_start_price) * 100
-        
+
         # Update peak if we're still climbing
         if abs(current_change) > abs(self.peak_change):
             self.momentum_peak_price = current_price
             self.momentum_peak_time = timestamp
             self.peak_change = current_change
-        
-        # Check if momentum has ended - price dropped 2% below initial spike threshold
-        # For a 5% threshold, end tracking when it drops below 3%
-        exit_threshold = self.threshold - 2.0
+
+        # Check if momentum has ended - price dropped below percentage-based threshold
+        # Use MOMENTUM_EXIT_MULTIPLIER (default 0.6) for proportional exit
+        # For a 5% threshold, end tracking at 3% (5 * 0.6)
+        # For a 10% threshold, end tracking at 6% (10 * 0.6)
+        exit_threshold = self.threshold * MOMENTUM_EXIT_MULTIPLIER
         
         # For pumps: current change falls below exit threshold
         # For dumps: current change rises above negative exit threshold
@@ -163,6 +180,11 @@ class PriceSpikeBot:
         self.max_reconnect_delay = 60
         self.backend_sio = None  # Socket.IO client for backend price data
         self.telegram_sio = None  # Socket.IO client for direct telegram alerts
+        self.last_cleanup_time = time.time()  # Track last cleanup
+        self.alerts_sent = 0  # Health metrics
+        self.db_writes = 0
+        self.connection_errors = 0
+
         # Initialize SQLite database
         db_path = os.getenv("DB_PATH", "/app/data/spike_alerts.db")
         try:
@@ -245,6 +267,34 @@ class PriceSpikeBot:
             logger.error(f"Failed to fetch stats: {e}")
             return []
 
+    def cleanup_inactive_trackers(self):
+        """Remove trackers that haven't been updated in TRACKER_CLEANUP_HOURS"""
+        current_time = time.time()
+        cleanup_threshold = TRACKER_CLEANUP_HOURS * 3600  # Convert hours to seconds
+
+        inactive_symbols = [
+            symbol for symbol, tracker in self.trackers.items()
+            if (current_time - tracker.last_update_time) > cleanup_threshold
+        ]
+
+        for symbol in inactive_symbols:
+            del self.trackers[symbol]
+            logger.info(f"Cleaned up inactive tracker: {symbol}")
+
+        if inactive_symbols:
+            logger.info(f"Removed {len(inactive_symbols)} inactive trackers")
+
+    def log_health_status(self):
+        """Log health metrics for monitoring"""
+        uptime = time.time() - self.last_cleanup_time
+        backend_status = "connected" if (self.backend_sio and self.backend_sio.connected) else "disconnected"
+        telegram_status = "connected" if (self.telegram_sio and self.telegram_sio.connected) else "disconnected"
+
+        logger.info(f"📊 Health Status: Active trackers: {len(self.trackers)}, "
+                   f"Alerts sent: {self.alerts_sent}, DB writes: {self.db_writes}, "
+                   f"Backend: {backend_status}, Telegram: {telegram_status}, "
+                   f"Connection errors: {self.connection_errors}")
+
     def send_alert(self, spike_data: dict):
         """Send spike alert via multiple channels and store in DB"""
         event_type = spike_data.get('event_type', 'spike')
@@ -285,8 +335,10 @@ class PriceSpikeBot:
         if hasattr(self, 'telegram_sio') and self.telegram_sio and self.telegram_sio.connected:
             try:
                 self.telegram_sio.emit('spike_alert', spike_data)
+                self.alerts_sent += 1
                 logger.info(f"⚡ Alert sent directly to Telegram: {spike_data['symbol']} {event_type}")
             except Exception as e:
+                self.connection_errors += 1
                 logger.error(f"Failed to emit direct alert to Telegram: {e}")
 
         # ALWAYS send to backend relay for other consumers (paper-trading bot, etc.)
@@ -295,6 +347,7 @@ class PriceSpikeBot:
                 self.backend_sio.emit('spike_alert', spike_data)
                 logger.info(f"⚡ Alert sent to backend relay: {spike_data['symbol']} {event_type}")
             except Exception as e:
+                self.connection_errors += 1
                 logger.error(f"Failed to emit to backend relay: {e}")
         
         if WEBHOOK_URL:
@@ -313,35 +366,43 @@ class PriceSpikeBot:
             except Exception as e:
                 logger.error(f"Failed to send webhook: {e}")
         
-        # Store in database (save all events)
-        try:
-            cursor = self.db.cursor()
-            cursor.execute("""
-                INSERT INTO stats (symbol, spike_type, event_type, pct_change, old_price, new_price, 
-                                 peak_price, peak_change, final_change, exit_change, time_span_seconds, 
-                                 timestamp, spike_time, peak_time, exit_threshold)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                spike_data['symbol'],
-                spike_data['spike_type'],
-                spike_data.get('event_type', 'spike'),
-                spike_data['pct_change'],
-                spike_data['old_price'],
-                spike_data['new_price'],
-                spike_data.get('peak_price'),
-                spike_data.get('peak_change'),
-                spike_data.get('final_change'),
-                spike_data.get('exit_change'),
-                spike_data['time_span_seconds'],
-                spike_data['timestamp'],
-                spike_data.get('spike_time'),
-                spike_data.get('peak_time'),
-                spike_data.get('exit_threshold')
-            ))
-            self.db.commit()
-            logger.info(f"Alert stored in database (event_type: {event_type})")
-        except Exception as e:
-            logger.error(f"Failed to store in database: {e}")
+        # Store in database (save all events) with retry logic
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                cursor = self.db.cursor()
+                cursor.execute("""
+                    INSERT INTO stats (symbol, spike_type, event_type, pct_change, old_price, new_price,
+                                     peak_price, peak_change, final_change, exit_change, time_span_seconds,
+                                     timestamp, spike_time, peak_time, exit_threshold)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    spike_data['symbol'],
+                    spike_data['spike_type'],
+                    spike_data.get('event_type', 'spike'),
+                    spike_data['pct_change'],
+                    spike_data['old_price'],
+                    spike_data['new_price'],
+                    spike_data.get('peak_price'),
+                    spike_data.get('peak_change'),
+                    spike_data.get('final_change'),
+                    spike_data.get('exit_change'),
+                    spike_data['time_span_seconds'],
+                    spike_data['timestamp'],
+                    spike_data.get('spike_time'),
+                    spike_data.get('peak_time'),
+                    spike_data.get('exit_threshold')
+                ))
+                self.db.commit()
+                self.db_writes += 1
+                logger.info(f"Alert stored in database (event_type: {event_type})")
+                break
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Database write failed (attempt {attempt+1}/{max_retries}): {e}")
+                    time.sleep(0.5 * (attempt + 1))  # Exponential backoff
+                else:
+                    logger.error(f"Failed to store in database after {max_retries} attempts: {e}")
         
         # Commented out the HTTP POST since backend doesn't have this endpoint
         # try:
@@ -377,6 +438,13 @@ class PriceSpikeBot:
                 spike = self.trackers[symbol].add_price(price, timestamp)
                 if spike:
                     self.send_alert(spike)
+
+                # Periodic cleanup and health logging (every 30 minutes)
+                if (timestamp - self.last_cleanup_time) > 1800:  # 30 minutes
+                    self.cleanup_inactive_trackers()
+                    self.log_health_status()
+                    self.last_cleanup_time = timestamp
+
             except Exception as e:
                 logger.error(f"Error processing ticker: {e}")
 
@@ -425,15 +493,26 @@ class PriceSpikeBot:
                 self.backend_sio.wait()
 
             except Exception as e:
-                logger.error(f"Connection error: {e}")
+                self.connection_errors += 1
+                logger.error(f"Connection error (total: {self.connection_errors}): {e}")
+
+                # Exponential backoff with jitter
                 time.sleep(self.reconnect_delay)
                 self.reconnect_delay = min(self.reconnect_delay * 2, self.max_reconnect_delay)
+
+                # Circuit breaker: if too many errors, increase max delay
+                if self.connection_errors > 10:
+                    self.max_reconnect_delay = 300  # 5 minutes for sustained failures
+                    logger.warning("Circuit breaker activated: Increased reconnection delay to 5 minutes")
 
     def run(self):
         """Main bot loop"""
         logger.info(f"Price Spike Bot Starting...")
         logger.info(f"Threshold: {PRICE_SPIKE_THRESHOLD}%")
         logger.info(f"Window: {PRICE_WINDOW_MINUTES} minutes")
+        logger.info(f"Momentum Exit Multiplier: {MOMENTUM_EXIT_MULTIPLIER} ({PRICE_SPIKE_THRESHOLD * MOMENTUM_EXIT_MULTIPLIER:.1f}% exit threshold)")
+        logger.info(f"Tracker Cleanup: {TRACKER_CLEANUP_HOURS} hour(s)")
+        logger.info(f"Max Price Jump: {MAX_PRICE_MULTIPLIER}x")
         logger.info(f"Backend: {BACKEND_URL}")
         logger.info(f"Telegram Direct: {TELEGRAM_SOCKET_URL}")
         logger.info(f"Database: {self.db_path}")

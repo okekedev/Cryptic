@@ -55,6 +55,9 @@ spike_socket_server = None
 # User preferences for trading
 DEFAULT_POSITION_PERCENTAGE = float(os.getenv('DEFAULT_POSITION_PERCENTAGE', '2.0'))
 
+# Store pending custom buy contexts (chat_id -> product_id)
+pending_custom_buys = {}
+
 
 def format_price_alert(data):
     """Format price alert with trading buttons"""
@@ -486,6 +489,111 @@ async def trading_stats_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 # Callback query handlers for inline buttons
+async def handle_custom_buy_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle user's custom amount input for buy orders"""
+    global pending_custom_buys
+
+    chat_id = str(update.message.chat_id)
+    user_input = update.message.text.strip()
+
+    # Check if this user has a pending custom buy
+    if chat_id not in pending_custom_buys:
+        return  # Not a custom buy input, ignore
+
+    product_id = pending_custom_buys[chat_id]
+    del pending_custom_buys[chat_id]  # Clear the pending state
+
+    try:
+        # Parse the input - could be "$50", "50", or "7.5%"
+        if '%' in user_input:
+            # Percentage format
+            percentage = float(user_input.replace('%', '').strip())
+            # Use the existing percentage handler logic
+            balance_info = await trading_manager.get_account_balance('USD')
+            if 'error' in balance_info:
+                await update.message.reply_text(f"❌ Error: {balance_info['error']}")
+                return
+
+            position_calc = trading_manager.calculate_position_size(
+                balance_info['available_trading'],
+                percentage=percentage
+            )
+
+            if not position_calc['valid']:
+                await update.message.reply_text(f"❌ {position_calc['error']}")
+                return
+
+            amount = position_calc['position_size']
+            percentage_str = str(percentage)
+
+        else:
+            # Dollar amount format
+            amount = float(user_input.replace('$', '').replace(',', '').strip())
+
+            # Validate minimum
+            if amount < trading_manager.min_order_usd:
+                await update.message.reply_text(
+                    f"❌ Amount ${amount:.2f} is below minimum ${trading_manager.min_order_usd}"
+                )
+                return
+
+            balance_info = await trading_manager.get_account_balance('USD')
+            if 'error' in balance_info:
+                await update.message.reply_text(f"❌ Error: {balance_info['error']}")
+                return
+
+            # Calculate what percentage this represents
+            available = balance_info['available_trading']
+            if amount > available:
+                await update.message.reply_text(
+                    f"❌ Amount ${amount:.2f} exceeds available balance ${available:.2f}"
+                )
+                return
+
+            percentage_str = str((amount / available) * 100)
+
+        # Get product info
+        product_info = await trading_manager.get_product_info(product_id)
+        if 'error' in product_info:
+            await update.message.reply_text(f"❌ Error: {product_info['error']}")
+            return
+
+        current_price = product_info['current_price']
+        estimated_coins = amount / current_price if current_price > 0 else 0
+        remaining_balance = balance_info['available_trading'] - amount
+
+        # Show confirmation
+        message = (
+            f"💰 *Confirm Market Buy*\n\n"
+            f"*Pair:* {product_id}\n"
+            f"*Current Price:* ${current_price:,.6f}\n"
+            f"*Purchase Amount:* ${amount:,.2f}\n"
+            f"*Est. Coins:* {estimated_coins:.8f}\n"
+            f"*Available Balance:* ${balance_info['available_trading']:,.2f}\n"
+            f"*After Purchase:* ${remaining_balance:,.2f}\n\n"
+            f"⚠️ This will execute a *MARKET BUY* at current price"
+        )
+
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ Confirm Buy", callback_data=f"confirm_buy:{product_id}:{amount}:{percentage_str}"),
+                InlineKeyboardButton("❌ Cancel", callback_data=f"ignore:{product_id}")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(message, parse_mode='Markdown', reply_markup=reply_markup)
+
+    except ValueError:
+        await update.message.reply_text(
+            f"❌ Invalid amount format. Please enter a number like `50` or `7.5%`"
+        )
+        pending_custom_buys[chat_id] = product_id  # Restore pending state
+    except Exception as e:
+        logger.error(f"Error processing custom buy input: {e}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle inline button callbacks"""
     query = update.callback_query
@@ -504,10 +612,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await handle_ignore_request(query, product_id)
 
         elif data.startswith("confirm_buy:"):
-            params = data.split(":", 2)
+            params = data.split(":", 3)
             product_id = params[1]
             amount = params[2]
-            await handle_buy_confirmation(query, product_id, amount, chat_id)
+            percentage = params[3] if len(params) > 3 else "2.0"
+            await handle_buy_confirmation(query, product_id, amount, percentage, chat_id)
 
         elif data.startswith("market_sell:"):
             product_id = data.split(":", 1)[1]
@@ -543,7 +652,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_buy_request(query, product_id: str, chat_id: str):
-    """Handle buy button click"""
+    """Handle buy button click - prompt for custom amount"""
     try:
         # Get balance and product info
         balance_info = await trading_manager.get_account_balance('USD')
@@ -557,30 +666,27 @@ async def handle_buy_request(query, product_id: str, chat_id: str):
             await query.edit_message_text(f"❌ Error getting product info: {product_info['error']}")
             return
 
-        # Calculate position size using available trading balance (after reserve)
-        position_calc = trading_manager.calculate_position_size(balance_info['available_trading'])
-
-        if not position_calc['valid']:
-            await query.edit_message_text(f"❌ {position_calc['error']}")
-            return
-
         current_price = product_info['current_price']
-        position_size = position_calc['position_size']
+        available_balance = balance_info['available_trading']
+
+        # Store pending buy context
+        global pending_custom_buys
+        pending_custom_buys[chat_id] = product_id
 
         message = (
-            f"💰 *Buy Confirmation*\n\n"
+            f"💵 *Enter Purchase Amount*\n\n"
             f"*Pair:* {product_id}\n"
             f"*Current Price:* ${current_price:,.6f}\n"
-            f"*Position Size:* {position_calc['formatted_size']} ({position_calc['percentage']:.1f}%)\n"
-            f"*Available Balance:* {balance_info['formatted']}\n"
-            f"*Order Type:* Market Buy"
+            f"*Available Balance:* ${available_balance:,.2f}\n\n"
+            f"Reply to this message with:\n"
+            f"• A dollar amount (e.g., `50` for $50)\n"
+            f"• A percentage (e.g., `7.5%` for 7.5%)\n\n"
+            f"Example: Type `100` to buy $100 worth\n"
+            f"Example: Type `12.5%` to buy 12.5% of balance"
         )
 
         keyboard = [
-            [
-                InlineKeyboardButton("✅ Confirm Buy", callback_data=f"confirm_buy:{product_id}:{position_size}"),
-                InlineKeyboardButton("❌ Cancel", callback_data=f"ignore:{product_id}")
-            ]
+            [InlineKeyboardButton("❌ Cancel", callback_data=f"ignore:{product_id}")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -591,13 +697,14 @@ async def handle_buy_request(query, product_id: str, chat_id: str):
         await query.edit_message_text(f"❌ Error preparing buy order: {str(e)}")
 
 
-async def handle_buy_confirmation(query, product_id: str, amount: str, chat_id: str):
-    """Handle buy confirmation"""
+async def handle_buy_confirmation(query, product_id: str, amount: str, percentage: str, chat_id: str):
+    """Handle buy confirmation and execute order"""
     try:
         # Execute the buy order
         order_result = await trading_manager.create_market_buy_order(
             product_id=product_id,
-            quote_size=amount
+            quote_size=amount,
+            position_percentage=float(percentage)
         )
 
         if order_result['success']:
@@ -902,6 +1009,10 @@ def main() -> None:
 
     # Add callback query handler for inline buttons
     application.add_handler(CallbackQueryHandler(button_callback))
+
+    # Add message handler for custom buy amount input (must be added last to not interfere with commands)
+    from telegram.ext import MessageHandler, filters
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_buy_input))
 
     # Setup initialization and shutdown
     application.post_init = post_init
