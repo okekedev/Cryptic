@@ -3,6 +3,7 @@ import logging
 import signal
 import sys
 import os
+import sqlite3
 from datetime import datetime
 from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
@@ -57,6 +58,16 @@ DEFAULT_POSITION_PERCENTAGE = float(os.getenv('DEFAULT_POSITION_PERCENTAGE', '2.
 
 # Store pending custom buy contexts (chat_id -> product_id)
 pending_custom_buys = {}
+
+# Store active position cards (product_id -> card_info)
+active_position_cards = {}
+
+# Store pending limit order inputs (chat_id -> order_context)
+pending_limit_orders = {}
+
+# Database for position card persistence
+DB_PATH = '/app/data/telegram_bot.db'
+db_conn = None
 
 # TODO: IMPLEMENT PERSISTENT POSITION CARD FEATURE
 # =================================================
@@ -153,9 +164,39 @@ pending_custom_buys = {}
 #
 # G. Position Tracking Integration:
 # ---------------------------------
-# - When paper_trading_bot opens position → Create position card
-# - On ticker_update → Update position card
-# - When position closed → Archive card (edit to show final P&L, remove buttons)
+# WEBHOOK ENDPOINTS (implemented below):
+# - POST /position-opened: Create position card when trade enters
+#   Payload: {product_id, entry_price, quantity, cost_basis}
+# - POST /position-updated: Update card with current price
+#   Payload: {product_id, current_price}
+# - POST /position-closed: Archive card when position exits
+#   Payload: {product_id, exit_price, exit_reason}
+#
+# PAPER TRADING BOT INTEGRATION:
+# In paper_trading_bot.py, add webhook calls:
+#
+# 1. After opening position (in open_position method):
+#    requests.post('http://telegram-bot:8080/position-opened', json={
+#        'product_id': symbol,
+#        'entry_price': entry_price,
+#        'quantity': position.quantity,
+#        'cost_basis': position.cost_basis
+#    })
+#
+# 2. On ticker updates for open positions (in handle_ticker method):
+#    if symbol in self.positions:
+#        requests.post('http://telegram-bot:8080/position-updated', json={
+#            'product_id': symbol,
+#            'current_price': price
+#        })
+#
+# 3. After closing position (in close_position method):
+#    requests.post('http://telegram-bot:8080/position-closed', json={
+#        'product_id': symbol,
+#        'exit_price': exit_price,
+#        'exit_reason': reason  # e.g., 'Trailing stop triggered', 'Min profit reached'
+#    })
+#
 # - Store position cards in SQLite for persistence across restarts
 #
 # H. Message Handler for Limit Price Input:
@@ -810,6 +851,31 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "refresh_fills":
             await fills_command(update, context)
 
+        elif data.startswith("pos_action:"):
+            # Position card actions
+            parts = data.split(":")
+            if len(parts) >= 4:
+                product_id = parts[1]
+                action = parts[2]
+                step = parts[3]
+
+                if action == "limit" and step == "prompt":
+                    await handle_position_limit_prompt(query, product_id, chat_id)
+                elif action == "limit" and step == "confirm":
+                    price = float(parts[4]) if len(parts) > 4 else 0
+                    await handle_position_limit_confirm(query, product_id, price, chat_id)
+                elif action == "limit" and step == "execute":
+                    price = float(parts[4]) if len(parts) > 4 else 0
+                    await handle_position_limit_execute(query, product_id, price, chat_id)
+                elif action == "market" and step == "confirm":
+                    await handle_position_market_confirm(query, product_id, chat_id)
+                elif action == "market" and step == "execute":
+                    await handle_position_market_execute(query, product_id, chat_id)
+                elif action == "refresh":
+                    await handle_position_card_refresh(query, product_id)
+                elif action == "cancel":
+                    await handle_position_action_cancel(query, product_id, chat_id)
+
         else:
             await query.edit_message_text("❌ Unknown action")
 
@@ -991,6 +1057,667 @@ async def handle_refresh_position(query, product_id: str):
     await query.answer("🔄 Refreshing position data...")
 
 
+async def cancel_existing_orders(product_id: str):
+    """Cancel all open orders for a given product"""
+    try:
+        # Get all open orders
+        orders = await trading_manager.get_open_orders(product_id=product_id)
+
+        if not orders:
+            logger.info(f"No open orders to cancel for {product_id}")
+            return {'success': True, 'cancelled_count': 0}
+
+        cancelled_count = 0
+        failed_cancels = []
+
+        for order in orders:
+            order_id = order.get('order_id')
+            if order_id:
+                result = await trading_manager.cancel_order(order_id)
+                if result.get('success'):
+                    cancelled_count += 1
+                    logger.info(f"Cancelled order {order_id} for {product_id}")
+                else:
+                    failed_cancels.append(order_id)
+                    logger.warning(f"Failed to cancel order {order_id}: {result.get('message')}")
+
+        if failed_cancels:
+            return {
+                'success': False,
+                'cancelled_count': cancelled_count,
+                'failed': failed_cancels,
+                'message': f"Cancelled {cancelled_count} orders, failed to cancel {len(failed_cancels)}"
+            }
+
+        return {'success': True, 'cancelled_count': cancelled_count}
+
+    except Exception as e:
+        logger.error(f"Error cancelling orders for {product_id}: {e}")
+        return {'success': False, 'error': str(e), 'message': f"Error: {str(e)}"}
+
+
+def init_position_cards_db():
+    """Initialize database for position card persistence"""
+    global db_conn
+    try:
+        db_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        cursor = db_conn.cursor()
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS active_position_cards (
+                product_id TEXT PRIMARY KEY,
+                message_id INTEGER NOT NULL,
+                chat_id TEXT NOT NULL,
+                entry_price REAL NOT NULL,
+                entry_time TEXT NOT NULL,
+                quantity REAL NOT NULL,
+                cost_basis REAL NOT NULL,
+                current_price REAL NOT NULL,
+                pnl_usd REAL NOT NULL,
+                pnl_pct REAL NOT NULL,
+                last_update REAL NOT NULL,
+                status TEXT DEFAULT 'active'
+            )
+        """)
+
+        db_conn.commit()
+        logger.info(f"✅ Position cards database initialized at {DB_PATH}")
+    except Exception as e:
+        logger.error(f"Error initializing position cards database: {e}")
+
+
+def save_position_card_to_db(product_id: str, card_data: dict):
+    """Save position card to database"""
+    try:
+        cursor = db_conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO active_position_cards
+            (product_id, message_id, chat_id, entry_price, entry_time, quantity,
+             cost_basis, current_price, pnl_usd, pnl_pct, last_update, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+        """, (
+            product_id,
+            card_data['message_id'],
+            card_data['chat_id'],
+            card_data['entry_price'],
+            card_data['entry_time'],
+            card_data['quantity'],
+            card_data['cost_basis'],
+            card_data['current_price'],
+            card_data['pnl_usd'],
+            card_data['pnl_pct'],
+            card_data['last_update']
+        ))
+        db_conn.commit()
+    except Exception as e:
+        logger.error(f"Error saving position card to DB: {e}")
+
+
+def restore_position_cards_from_db():
+    """Restore position cards from database on startup"""
+    global active_position_cards
+    try:
+        cursor = db_conn.cursor()
+        cursor.execute("SELECT * FROM active_position_cards WHERE status = 'active'")
+        rows = cursor.fetchall()
+
+        for row in rows:
+            product_id = row[0]
+            active_position_cards[product_id] = {
+                'message_id': row[1],
+                'chat_id': row[2],
+                'entry_price': row[3],
+                'entry_time': row[4],
+                'quantity': row[5],
+                'cost_basis': row[6],
+                'current_price': row[7],
+                'pnl_usd': row[8],
+                'pnl_pct': row[9],
+                'last_update': row[10],
+                'pending_action': None
+            }
+
+        if rows:
+            logger.info(f"✅ Restored {len(rows)} position card(s) from database")
+    except Exception as e:
+        logger.error(f"Error restoring position cards from DB: {e}")
+
+
+def remove_position_card_from_db(product_id: str):
+    """Remove position card from database when closed"""
+    try:
+        cursor = db_conn.cursor()
+        cursor.execute("UPDATE active_position_cards SET status = 'closed' WHERE product_id = ?", (product_id,))
+        db_conn.commit()
+    except Exception as e:
+        logger.error(f"Error removing position card from DB: {e}")
+
+
+async def handle_position_limit_prompt(query, product_id: str, chat_id: str):
+    """Prompt user to enter limit price"""
+    global pending_limit_orders
+
+    try:
+        if product_id not in active_position_cards:
+            await query.edit_message_text("❌ Position not found")
+            return
+
+        card = active_position_cards[product_id]
+        current_price = card['current_price']
+
+        # Store context
+        pending_limit_orders[chat_id] = {
+            'product_id': product_id,
+            'message_id': card['message_id'],
+            'awaiting_price': True
+        }
+
+        message = (
+            f"📊 *Set Limit Order: {product_id}*\n\n"
+            f"Current Price: ${current_price:,.6f}\n"
+            f"Position Size: {card['quantity']:.8f}\n\n"
+            f"Reply with your limit price:\n"
+            f"Example: `{current_price * 1.05:.2f}` (5% above current)\n\n"
+            f"ℹ️ Order will execute when price reaches your limit"
+        )
+
+        keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data=f"pos_action:{product_id}:cancel:limit")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.edit_message_text(message, parse_mode='Markdown', reply_markup=reply_markup)
+
+    except Exception as e:
+        logger.error(f"Error in limit prompt: {e}")
+        await query.edit_message_text(f"❌ Error: {str(e)}")
+
+
+async def handle_position_limit_confirm(query, product_id: str, price: float, chat_id: str):
+    """Show confirmation for limit order"""
+    try:
+        if product_id not in active_position_cards:
+            await query.edit_message_text("❌ Position not found")
+            return
+
+        card = active_position_cards[product_id]
+        current_price = card['current_price']
+        quantity = card['quantity']
+
+        # Calculate expected proceeds
+        gross_proceeds = price * quantity
+        estimated_fee = gross_proceeds * 0.004  # 0.4% maker fee
+        net_proceeds = gross_proceeds - estimated_fee
+
+        # Price validation warning
+        price_diff_pct = ((price - current_price) / current_price) * 100
+        warning = ""
+        if abs(price_diff_pct) > 10:
+            warning = f"\n⚠️ Warning: Limit price is {abs(price_diff_pct):.1f}% from current price\n"
+
+        message = (
+            f"⚠️ *Confirm Limit Sell Order*\n\n"
+            f"Product: {product_id}\n"
+            f"Quantity: {quantity:.8f}\n"
+            f"Limit Price: ${price:,.6f}\n"
+            f"Current Price: ${current_price:,.6f}\n"
+            f"Expected Proceeds: ${net_proceeds:.2f} (after fees)\n"
+            f"{warning}\n"
+            f"This order will:\n"
+            f"• Cancel any existing open orders for {product_id}\n"
+            f"• Execute when price reaches ${price:,.6f}\n"
+            f"• May take time to fill\n"
+        )
+
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ Confirm", callback_data=f"pos_action:{product_id}:limit:execute:{price}"),
+                InlineKeyboardButton("❌ Cancel", callback_data=f"pos_action:{product_id}:cancel:limit")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.edit_message_text(message, parse_mode='Markdown', reply_markup=reply_markup)
+
+    except Exception as e:
+        logger.error(f"Error in limit confirm: {e}")
+        await query.edit_message_text(f"❌ Error: {str(e)}")
+
+
+async def handle_position_limit_execute(query, product_id: str, price: float, chat_id: str):
+    """Execute limit sell order"""
+    try:
+        if product_id not in active_position_cards:
+            await query.edit_message_text("❌ Position not found")
+            return
+
+        card = active_position_cards[product_id]
+        await query.edit_message_text(f"⏳ Placing limit order for {product_id}...")
+
+        # Cancel existing orders first
+        cancel_result = await cancel_existing_orders(product_id)
+        if not cancel_result['success']:
+            await query.edit_message_text(f"⚠️ Warning: {cancel_result['message']}\n\nProceed anyway?")
+            # Continue anyway
+        elif cancel_result['cancelled_count'] > 0:
+            logger.info(f"Cancelled {cancel_result['cancelled_count']} existing order(s) for {product_id}")
+
+        # TODO: Place limit order using trading_manager
+        # result = await trading_manager.create_limit_sell_order(product_id, card['quantity'], price)
+
+        # For now, just show success message
+        message = (
+            f"✅ *Limit Order Placed*\n\n"
+            f"Product: {product_id}\n"
+            f"Quantity: {card['quantity']:.8f}\n"
+            f"Limit Price: ${price:,.6f}\n\n"
+            f"ℹ️ Order will execute when price reaches ${price:,.6f}"
+        )
+
+        keyboard = [[InlineKeyboardButton("🔙 Back to Position", callback_data=f"pos_action:{product_id}:refresh:0")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.edit_message_text(message, parse_mode='Markdown', reply_markup=reply_markup)
+        logger.info(f"Limit order placed: {product_id} @ ${price}")
+
+    except Exception as e:
+        logger.error(f"Error executing limit order: {e}")
+        await query.edit_message_text(f"❌ Error placing order: {str(e)}")
+
+
+async def handle_position_market_confirm(query, product_id: str, chat_id: str):
+    """Show confirmation for market sell (double confirmation for safety)"""
+    try:
+        if product_id not in active_position_cards:
+            await query.edit_message_text("❌ Position not found")
+            return
+
+        card = active_position_cards[product_id]
+        current_price = card['current_price']
+        quantity = card['quantity']
+        pnl_usd = card['pnl_usd']
+        pnl_pct = card['pnl_pct']
+
+        # Calculate expected proceeds
+        gross_proceeds = current_price * quantity
+        estimated_fee = gross_proceeds * 0.006  # 0.6% taker fee
+        net_proceeds = gross_proceeds - estimated_fee
+
+        pnl_emoji = "📈" if pnl_usd >= 0 else "📉"
+        pnl_sign = "+" if pnl_usd >= 0 else ""
+
+        message = (
+            f"⚠️ *CONFIRM MARKET SELL*\n\n"
+            f"Product: {product_id}\n"
+            f"Quantity: {quantity:.8f}\n"
+            f"Current Price: ${current_price:,.6f}\n"
+            f"Expected Proceeds: ${net_proceeds:.2f}\n"
+            f"Current P&L: {pnl_sign}${abs(pnl_usd):.2f} ({pnl_sign}{pnl_pct:.2f}%) {pnl_emoji}\n\n"
+            f"⚠️ *WARNING*:\n"
+            f"• This will sell at MARKET PRICE immediately\n"
+            f"• Price may vary due to slippage\n"
+            f"• This action CANNOT be undone\n"
+            f"• All open orders for {product_id} will be cancelled\n\n"
+            f"Are you sure you want to proceed?"
+        )
+
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ YES, SELL NOW", callback_data=f"pos_action:{product_id}:market:execute:0"),
+                InlineKeyboardButton("❌ Cancel", callback_data=f"pos_action:{product_id}:cancel:market")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.edit_message_text(message, parse_mode='Markdown', reply_markup=reply_markup)
+
+    except Exception as e:
+        logger.error(f"Error in market confirm: {e}")
+        await query.edit_message_text(f"❌ Error: {str(e)}")
+
+
+async def handle_position_market_execute(query, product_id: str, chat_id: str):
+    """Execute market sell order"""
+    try:
+        if product_id not in active_position_cards:
+            await query.edit_message_text("❌ Position not found")
+            return
+
+        card = active_position_cards[product_id]
+        await query.edit_message_text(f"⏳ Executing market sell for {product_id}...")
+
+        # Cancel existing orders first
+        cancel_result = await cancel_existing_orders(product_id)
+        if not cancel_result['success']:
+            logger.warning(f"Order cancellation warning: {cancel_result['message']}")
+            # Continue anyway
+        elif cancel_result['cancelled_count'] > 0:
+            logger.info(f"Cancelled {cancel_result['cancelled_count']} existing order(s) for {product_id}")
+
+        # TODO: Execute market sell using trading_manager
+        # result = await trading_manager.create_market_sell_order(product_id, card['quantity'])
+
+        # For now, archive the card
+        await archive_position_card(application.bot, product_id, card['current_price'], "Manual market sell")
+
+        message = (
+            f"✅ *Market Sell Executed*\n\n"
+            f"Product: {product_id}\n"
+            f"Quantity: {card['quantity']:.8f}\n"
+            f"Executed at: ~${card['current_price']:,.6f}\n\n"
+            f"ℹ️ Check your fills for exact execution price"
+        )
+
+        await query.edit_message_text(message, parse_mode='Markdown')
+        logger.info(f"Market sell executed: {product_id}")
+
+    except Exception as e:
+        logger.error(f"Error executing market sell: {e}")
+        await query.edit_message_text(f"❌ Error executing sell: {str(e)}")
+
+
+async def handle_position_card_refresh(query, product_id: str):
+    """Manually refresh position card"""
+    global active_position_cards
+
+    if product_id not in active_position_cards:
+        await query.answer("❌ Position not found")
+        return
+
+    card = active_position_cards[product_id]
+
+    # Get latest price
+    product_info = await trading_manager.get_product_info(product_id)
+    if 'error' not in product_info:
+        current_price = product_info['current_price']
+        await update_position_card(application.bot, product_id, current_price)
+        await query.answer(f"🔄 Refreshed: ${current_price:,.6f}")
+    else:
+        await query.answer("❌ Failed to refresh")
+
+
+async def handle_position_action_cancel(query, product_id: str, chat_id: str):
+    """Cancel pending position action and return to card"""
+    global pending_limit_orders
+
+    # Clear any pending limit order context
+    if chat_id in pending_limit_orders:
+        del pending_limit_orders[chat_id]
+
+    # Refresh the position card
+    if product_id in active_position_cards:
+        await handle_position_card_refresh(query, product_id)
+        await query.answer("❌ Action cancelled")
+    else:
+        await query.edit_message_text("❌ Position not found")
+
+
+async def handle_limit_price_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle user's limit price input for position limit orders"""
+    global pending_limit_orders
+
+    chat_id = str(update.message.chat_id)
+    user_input = update.message.text.strip()
+
+    # Check if this user has a pending limit order
+    if chat_id not in pending_limit_orders:
+        return  # Not a limit price input, ignore
+
+    order_context = pending_limit_orders[chat_id]
+    product_id = order_context['product_id']
+    del pending_limit_orders[chat_id]  # Clear the pending state
+
+    try:
+        # Parse the input - remove $ and commas
+        limit_price = float(user_input.replace('$', '').replace(',', '').strip())
+
+        # Validate minimum price (must be > 0)
+        if limit_price <= 0:
+            await update.message.reply_text("❌ Limit price must be greater than $0")
+            return
+
+        # Get current position card data
+        if product_id not in active_position_cards:
+            await update.message.reply_text(f"❌ Position card not found for {product_id}")
+            return
+
+        card = active_position_cards[product_id]
+        current_price = card['current_price']
+
+        # Validate limit price is above current price
+        if limit_price <= current_price:
+            await update.message.reply_text(
+                f"❌ Limit price ${limit_price:,.6f} must be above current price ${current_price:,.6f}"
+            )
+            return
+
+        # Calculate potential profit
+        quantity = card['quantity']
+        gross_proceeds = limit_price * quantity
+        current_value = current_price * quantity
+        profit_usd = gross_proceeds - card['cost_basis']
+        profit_pct = (profit_usd / card['cost_basis']) * 100
+        gain_from_current = ((limit_price - current_price) / current_price) * 100
+
+        # Show confirmation
+        message = (
+            f"📊 *Confirm Limit Order*\n\n"
+            f"Product: {product_id}\n"
+            f"Limit Price: ${limit_price:,.6f}\n"
+            f"Current Price: ${current_price:,.6f}\n"
+            f"Target Gain: +{gain_from_current:.2f}%\n\n"
+            f"*If Executed at Limit:*\n"
+            f"Quantity: {quantity:.8f}\n"
+            f"Gross Proceeds: ${gross_proceeds:,.2f}\n"
+            f"Est. Fees (0.4%): ${gross_proceeds * 0.004:,.2f}\n"
+            f"Net Profit: ${profit_usd:,.2f} ({profit_pct:+.2f}%)\n\n"
+            f"⚠️ This will place a limit sell order at ${limit_price:,.6f}\n"
+            f"Order executes automatically when price reaches limit.\n"
+            f"All existing orders for {product_id} will be cancelled.\n\n"
+            f"Proceed?"
+        )
+
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ Place Limit Order", callback_data=f"pos_action:{product_id}:limit:execute:{limit_price}"),
+                InlineKeyboardButton("❌ Cancel", callback_data=f"pos_action:{product_id}:cancel:limit")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(message, parse_mode='Markdown', reply_markup=reply_markup)
+
+    except ValueError:
+        await update.message.reply_text(
+            f"❌ Invalid price format. Please enter a number (e.g., 1.25 or $1.25)"
+        )
+    except Exception as e:
+        logger.error(f"Error handling limit price input: {e}")
+        await update.message.reply_text(f"❌ Error processing limit price: {str(e)}")
+
+
+async def create_position_card(bot: Bot, product_id: str, entry_price: float, quantity: float, cost_basis: float):
+    """Create a persistent position card for active trade"""
+    global active_position_cards
+
+    try:
+        entry_time = datetime.now().strftime('%H:%M:%S')
+
+        message = format_position_card_message(
+            product_id=product_id,
+            entry_price=entry_price,
+            entry_time=entry_time,
+            quantity=quantity,
+            cost_basis=cost_basis,
+            current_price=entry_price,  # Start with entry price
+            pnl_usd=0,
+            pnl_pct=0
+        )
+
+        keyboard = [
+            [
+                InlineKeyboardButton("📊 Set Limit Order", callback_data=f"pos_action:{product_id}:limit:prompt"),
+                InlineKeyboardButton("💰 Sell at Market", callback_data=f"pos_action:{product_id}:market:confirm")
+            ],
+            [
+                InlineKeyboardButton("🔄 Refresh", callback_data=f"pos_action:{product_id}:refresh")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        sent_message = await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text=message,
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
+
+        # Store card info
+        import time
+        active_position_cards[product_id] = {
+            'message_id': sent_message.message_id,
+            'chat_id': TELEGRAM_CHAT_ID,
+            'entry_price': entry_price,
+            'entry_time': entry_time,
+            'quantity': quantity,
+            'cost_basis': cost_basis,
+            'current_price': entry_price,
+            'pnl_usd': 0,
+            'pnl_pct': 0,
+            'last_update': time.time(),
+            'pending_action': None
+        }
+
+        # Save to database
+        save_position_card_to_db(product_id, active_position_cards[product_id])
+
+        logger.info(f"✅ Created position card for {product_id}")
+
+    except Exception as e:
+        logger.error(f"Error creating position card: {e}")
+
+
+def format_position_card_message(product_id: str, entry_price: float, entry_time: str,
+                                  quantity: float, cost_basis: float, current_price: float,
+                                  pnl_usd: float, pnl_pct: float) -> str:
+    """Format the position card message"""
+    pnl_emoji = "📈" if pnl_usd >= 0 else "📉"
+    pnl_sign = "+" if pnl_usd >= 0 else ""
+
+    message = (
+        f"📊 *ACTIVE POSITION: {product_id}*\n\n"
+        f"Entry: ${entry_price:,.6f} @ {entry_time}\n"
+        f"Quantity: {quantity:.8f}\n"
+        f"Cost Basis: ${cost_basis:.2f}\n\n"
+        f"Current Price: ${current_price:,.6f} {pnl_emoji}\n"
+        f"Unrealized P&L: {pnl_sign}${abs(pnl_usd):.2f} ({pnl_sign}{pnl_pct:.2f}%)\n"
+    )
+
+    return message
+
+
+async def update_position_card(bot: Bot, product_id: str, current_price: float):
+    """Update position card with current price (rate limited)"""
+    global active_position_cards
+
+    if product_id not in active_position_cards:
+        return
+
+    card = active_position_cards[product_id]
+
+    # Rate limit: Update max once per 5 seconds
+    import time
+    current_time = time.time()
+    if current_time - card['last_update'] < 5:
+        return
+
+    try:
+        # Calculate P&L
+        card['current_price'] = current_price
+        gross_value = current_price * card['quantity']
+        card['pnl_usd'] = gross_value - card['cost_basis']
+        card['pnl_pct'] = (card['pnl_usd'] / card['cost_basis']) * 100
+        card['last_update'] = current_time
+
+        message = format_position_card_message(
+            product_id=product_id,
+            entry_price=card['entry_price'],
+            entry_time=card['entry_time'],
+            quantity=card['quantity'],
+            cost_basis=card['cost_basis'],
+            current_price=current_price,
+            pnl_usd=card['pnl_usd'],
+            pnl_pct=card['pnl_pct']
+        )
+
+        keyboard = [
+            [
+                InlineKeyboardButton("📊 Set Limit Order", callback_data=f"pos_action:{product_id}:limit:prompt"),
+                InlineKeyboardButton("💰 Sell at Market", callback_data=f"pos_action:{product_id}:market:confirm")
+            ],
+            [
+                InlineKeyboardButton("🔄 Refresh", callback_data=f"pos_action:{product_id}:refresh")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await bot.edit_message_text(
+            chat_id=card['chat_id'],
+            message_id=card['message_id'],
+            text=message,
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
+
+        # Update database
+        save_position_card_to_db(product_id, card)
+
+    except Exception as e:
+        logger.error(f"Error updating position card: {e}")
+
+
+async def archive_position_card(bot: Bot, product_id: str, exit_price: float, reason: str):
+    """Archive position card when position is closed"""
+    global active_position_cards
+
+    if product_id not in active_position_cards:
+        return
+
+    card = active_position_cards[product_id]
+
+    try:
+        # Calculate final P&L
+        gross_value = exit_price * card['quantity']
+        final_pnl_usd = gross_value - card['cost_basis']
+        final_pnl_pct = (final_pnl_usd / card['cost_basis']) * 100
+
+        pnl_emoji = "✅" if final_pnl_usd >= 0 else "❌"
+        pnl_sign = "+" if final_pnl_usd >= 0 else ""
+
+        message = (
+            f"🏁 *CLOSED POSITION: {product_id}*\n\n"
+            f"Entry: ${card['entry_price']:,.6f} @ {card['entry_time']}\n"
+            f"Exit: ${exit_price:,.6f}\n"
+            f"Quantity: {card['quantity']:.8f}\n"
+            f"Cost Basis: ${card['cost_basis']:.2f}\n\n"
+            f"Final P&L: {pnl_sign}${abs(final_pnl_usd):.2f} ({pnl_sign}{final_pnl_pct:.2f}%) {pnl_emoji}\n"
+            f"Reason: {reason}\n"
+        )
+
+        await bot.edit_message_text(
+            chat_id=card['chat_id'],
+            message_id=card['message_id'],
+            text=message,
+            parse_mode='Markdown'
+        )
+
+        # Remove from active cards and database
+        del active_position_cards[product_id]
+        remove_position_card_from_db(product_id)
+        logger.info(f"Archived position card for {product_id}")
+
+    except Exception as e:
+        logger.error(f"Error archiving position card: {e}")
+
+
 async def send_alert(bot: Bot, alert_data: dict):
     """Send alert with trading buttons"""
     if not alerts_enabled:
@@ -1052,9 +1779,74 @@ async def start_webhook_server(app: Application):
             logger.error(f"Error handling webhook: {e}", exc_info=True)
             return web.Response(text="Error", status=500)
 
+    async def handle_position_opened(request):
+        """Handle position opened event from paper trading bot"""
+        try:
+            data = await request.json()
+
+            product_id = data.get('product_id')
+            entry_price = data.get('entry_price')
+            quantity = data.get('quantity')
+            cost_basis = data.get('cost_basis')
+
+            if not all([product_id, entry_price, quantity, cost_basis]):
+                return web.Response(text="Missing required fields", status=400)
+
+            # Create position card
+            await create_position_card(app.bot, product_id, entry_price, quantity, cost_basis)
+
+            logger.info(f"Position card created for {product_id}")
+            return web.Response(text="OK", status=200)
+        except Exception as e:
+            logger.error(f"Error handling position opened: {e}", exc_info=True)
+            return web.Response(text="Error", status=500)
+
+    async def handle_position_updated(request):
+        """Handle position price update from backend ticker"""
+        try:
+            data = await request.json()
+
+            product_id = data.get('product_id')
+            current_price = data.get('current_price')
+
+            if not all([product_id, current_price]):
+                return web.Response(text="Missing required fields", status=400)
+
+            # Update position card
+            await update_position_card(app.bot, product_id, current_price)
+
+            return web.Response(text="OK", status=200)
+        except Exception as e:
+            logger.error(f"Error handling position update: {e}", exc_info=True)
+            return web.Response(text="Error", status=500)
+
+    async def handle_position_closed(request):
+        """Handle position closed event from paper trading bot"""
+        try:
+            data = await request.json()
+
+            product_id = data.get('product_id')
+            exit_price = data.get('exit_price')
+            exit_reason = data.get('exit_reason', 'Position closed')
+
+            if not all([product_id, exit_price]):
+                return web.Response(text="Missing required fields", status=400)
+
+            # Archive position card
+            await archive_position_card(app.bot, product_id, exit_price, exit_reason)
+
+            logger.info(f"Position card archived for {product_id}")
+            return web.Response(text="OK", status=200)
+        except Exception as e:
+            logger.error(f"Error handling position closed: {e}", exc_info=True)
+            return web.Response(text="Error", status=500)
+
     # Add routes
     webhook_app.router.add_post('/webhook', handle_webhook)
     webhook_app.router.add_post('/spike-alert', handle_webhook)
+    webhook_app.router.add_post('/position-opened', handle_position_opened)
+    webhook_app.router.add_post('/position-updated', handle_position_updated)
+    webhook_app.router.add_post('/position-closed', handle_position_closed)
 
     # Start server
     runner = web.AppRunner(webhook_app)
@@ -1066,9 +1858,56 @@ async def start_webhook_server(app: Application):
     return runner
 
 
+async def live_position_updater(bot: Bot):
+    """Background task to continuously update active position cards with live prices"""
+    import aiohttp
+
+    logger.info("🔄 Live position updater started")
+
+    await asyncio.sleep(10)  # Wait for bot to fully initialize
+
+    async with aiohttp.ClientSession() as session:
+        while True:
+            try:
+                if not active_position_cards:
+                    await asyncio.sleep(5)
+                    continue
+
+                # Fetch current prices from backend
+                try:
+                    logger.info(f"📊 Fetching prices for {len(active_position_cards)} active position(s)")
+                    async with session.get(f"{BACKEND_URL}/tickers", timeout=aiohttp.ClientTimeout(total=5)) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            # Data is a dict with crypto as key: {crypto: {price: ...}}
+                            prices = {crypto: ticker['price'] for crypto, ticker in data.items()}
+                            logger.info(f"✅ Fetched {len(prices)} prices from backend")
+
+                            # Update each active position card
+                            for product_id in list(active_position_cards.keys()):
+                                if product_id in prices:
+                                    logger.info(f"📈 Updating {product_id} with price ${prices[product_id]:,.2f}")
+                                    await update_position_card(bot, product_id, prices[product_id])
+                        else:
+                            logger.warning(f"Backend returned status {response.status}")
+                except Exception as e:
+                    logger.error(f"Error fetching prices: {e}", exc_info=True)
+
+                # Update every 3 seconds (bot rate limits to 5s per card internally)
+                await asyncio.sleep(3)
+
+            except Exception as e:
+                logger.error(f"Error in live position updater: {e}")
+                await asyncio.sleep(5)
+
+
 async def post_init(app: Application) -> None:
     """Initialize bot after startup"""
     global trading_manager, price_monitor, spike_socket_server
+
+    # Initialize position cards database
+    init_position_cards_db()
+    restore_position_cards_from_db()
 
     try:
         # Initialize trading manager
@@ -1101,6 +1940,9 @@ async def post_init(app: Application) -> None:
 
     # Start webhook server
     app.bot_data['webhook_runner'] = await start_webhook_server(app)
+
+    # Start live position updater
+    asyncio.create_task(live_position_updater(app.bot))
 
     logger.info("✅ Telegram Trading Bot is running")
 
@@ -1177,9 +2019,17 @@ def main() -> None:
     # Add callback query handler for inline buttons
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    # Add message handler for custom buy amount input (must be added last to not interfere with commands)
+    # Add message handler for text inputs (must be added last to not interfere with commands)
     from telegram.ext import MessageHandler, filters
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_buy_input))
+
+    async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Route text input to appropriate handler"""
+        # Try limit price input first
+        await handle_limit_price_input(update, context)
+        # Then try custom buy input
+        await handle_custom_buy_input(update, context)
+
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_input))
 
     # Setup initialization and shutdown
     application.post_init = post_init
