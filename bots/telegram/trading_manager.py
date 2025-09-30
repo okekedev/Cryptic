@@ -3,9 +3,10 @@ import logging
 import asyncio
 import time
 import json
-from typing import Dict, Optional, List, Tuple
-from decimal import Decimal, ROUND_DOWN
-from coinbase.rest import RESTClient
+import jwt
+import requests
+from typing import Dict, Optional, List
+from cryptography.hazmat.primitives import serialization
 from datetime import datetime, date
 from pathlib import Path
 
@@ -23,23 +24,26 @@ class TradingManager:
         if not self.api_key or not self.signing_key:
             raise ValueError('COINBASE_TRADING_API_KEY and COINBASE_TRADING_SIGNING_KEY must be set')
 
-        self.client = RESTClient(api_key=self.api_key, api_secret=self.signing_key)
-        self.active_positions = {}  # product_id -> position_info
-        self.pending_orders = {}    # order_id -> order_info
+        # Replace escaped newlines
+        self.signing_key = self.signing_key.replace('\\n', '\n')
+        
+        self.base_url = "https://api.coinbase.com"
+        self.active_positions = {}
+        self.pending_orders = {}
 
         # Enhanced trading settings with safety features
-        self.default_position_percentage = float(os.getenv('DEFAULT_POSITION_PERCENTAGE', '2.0'))  # 2% of balance
-        self.max_position_percentage = float(os.getenv('MAX_POSITION_PERCENTAGE', '5.0'))          # 5% max (reduced for safety)
-        self.min_order_usd = float(os.getenv('MIN_TRADE_USD', '10.0'))                            # $10 minimum
-        self.reserve_percentage = float(os.getenv('RESERVE_PERCENTAGE', '5.0'))                   # Keep 5% USD as reserve
-        self.max_daily_trades = int(os.getenv('MAX_DAILY_TRADES', '10'))                          # Daily trade limit
+        self.default_position_percentage = float(os.getenv('DEFAULT_POSITION_PERCENTAGE', '2.0'))
+        self.max_position_percentage = float(os.getenv('MAX_POSITION_PERCENTAGE', '5.0'))
+        self.min_order_usd = float(os.getenv('MIN_TRADE_USD', '10.0'))
+        self.reserve_percentage = float(os.getenv('RESERVE_PERCENTAGE', '5.0'))
+        self.max_daily_trades = int(os.getenv('MAX_DAILY_TRADES', '10'))
         self.daily_trade_count = 0
         self.last_trade_date = None
         self.emergency_stop = False
 
         # Rate limiting
         self.last_api_call = 0
-        self.min_api_interval = 0.1  # 100ms between calls (10 calls/second limit)
+        self.min_api_interval = 0.1
 
         # Trade tracking and statistics
         self.trades_file = Path("trade_log.json")
@@ -51,6 +55,79 @@ class TradingManager:
             logger.warning('🚨 EMERGENCY STOP ACTIVATED - All trading disabled')
 
         logger.info(f'Enhanced Trading Manager initialized - Default: {self.default_position_percentage}%, Max: {self.max_position_percentage}%, Reserve: {self.reserve_percentage}%')
+
+    def _generate_jwt(self, method: str, path: str) -> str:
+        """Generate JWT token for authentication"""
+        try:
+            # Load private key
+            private_key = serialization.load_pem_private_key(
+                self.signing_key.encode(),
+                password=None
+            )
+            
+            # Create JWT URI (method + host + path)
+            uri = f"{method} api.coinbase.com{path}"
+            
+            # Create JWT payload
+            current_time = int(time.time())
+            payload = {
+                'sub': self.api_key,
+                'iss': 'coinbase-cloud',
+                'nbf': current_time,
+                'exp': current_time + 120,
+                'uri': uri
+            }
+            
+            # Generate JWT token
+            token = jwt.encode(
+                payload,
+                private_key,
+                algorithm='ES256',
+                headers={'kid': self.api_key, 'nonce': str(current_time)}
+            )
+            
+            return token
+            
+        except Exception as e:
+            raise Exception(f"Failed to generate JWT: {e}")
+
+    def _make_request(self, method: str, path: str, json_data: Optional[Dict] = None) -> Dict:
+        """Make authenticated request to Coinbase API"""
+        # Generate JWT for this specific request
+        token = self._generate_jwt(method, path)
+        
+        # Prepare headers
+        headers = {
+            'Authorization': f'Bearer {token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Make request
+        url = f"{self.base_url}{path}"
+        
+        try:
+            if method == 'GET':
+                response = requests.get(url, headers=headers, timeout=10)
+            elif method == 'POST':
+                response = requests.post(url, headers=headers, json=json_data, timeout=10)
+            elif method == 'DELETE':
+                response = requests.delete(url, headers=headers, json=json_data, timeout=10)
+            elif method == 'PUT':
+                response = requests.put(url, headers=headers, json=json_data, timeout=10)
+            else:
+                raise ValueError(f"Unsupported HTTP method: {method}")
+            
+            # Handle response
+            if response.status_code == 200:
+                return response.json()
+            else:
+                error_msg = f"API request failed ({response.status_code}): {response.text}"
+                logger.error(error_msg)
+                return {'error': error_msg, 'status_code': response.status_code}
+                
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request exception: {e}")
+            return {'error': str(e)}
 
     def load_trade_statistics(self):
         """Load trade statistics from file"""
@@ -136,16 +213,13 @@ class TradingManager:
 
     def validate_trading_conditions(self) -> Dict:
         """Validate if trading is allowed"""
-        # Check emergency stop
         if self.emergency_stop:
             return {'valid': False, 'error': '🚨 Emergency stop is active. Trading disabled.'}
 
-        # Check emergency stop environment variable
         if os.getenv('EMERGENCY_STOP', 'false').lower() == 'true':
             self.emergency_stop = True
             return {'valid': False, 'error': '🚨 Emergency stop activated via environment. Trading disabled.'}
 
-        # Check daily trade limits
         today = str(date.today())
         if self.last_trade_date != today:
             self.daily_trade_count = 0
@@ -189,18 +263,20 @@ class TradingManager:
         }
 
     async def get_account_balance(self, currency: str = 'USD') -> Dict:
-        """Get account balance for specified currency with rate limiting"""
+        """Get account balance for specified currency"""
         try:
             await self.rate_limit_check()
-            response = self.client.get_accounts()
-            accounts = response.accounts if hasattr(response, 'accounts') else []
+            response = self._make_request('GET', '/api/v3/brokerage/accounts')
+            
+            if 'error' in response:
+                return {'currency': currency, 'error': response['error']}
+            
+            accounts = response.get('accounts', [])
 
             for account in accounts:
-                if hasattr(account, 'currency') and account.currency == currency:
-                    balance_obj = getattr(account, 'available_balance', None)
-                    total_balance = float(balance_obj.value) if balance_obj and hasattr(balance_obj, 'value') else 0.0
+                if account.get('currency') == currency:
+                    total_balance = float(account.get('available_balance', {}).get('value', 0))
 
-                    # Calculate available trading balance (after reserve)
                     if currency == 'USD':
                         available_balance = self.calculate_available_trading_balance(total_balance)
                         reserve_amount = total_balance - available_balance
@@ -213,37 +289,41 @@ class TradingManager:
                         'balance': total_balance,
                         'available_trading': available_balance,
                         'reserve': reserve_amount,
-                        'uuid': getattr(account, 'uuid', None),
+                        'uuid': account.get('uuid'),
                         'formatted': f"${total_balance:,.2f}" if currency == 'USD' else f"{total_balance:.8f} {currency}",
                         'available_formatted': f"${available_balance:,.2f}" if currency == 'USD' else f"{available_balance:.8f} {currency}"
                     }
 
-            return {'currency': currency, 'balance': 0.0, 'available_trading': 0.0, 'reserve': 0.0, 'uuid': None, 'formatted': f"0.00 {currency}", 'available_formatted': f"0.00 {currency}"}
+            return {
+                'currency': currency, 
+                'balance': 0.0, 
+                'available_trading': 0.0, 
+                'reserve': 0.0, 
+                'formatted': f"0.00 {currency}"
+            }
 
         except Exception as e:
             logger.error(f'Error getting {currency} balance: {e}')
-            return {'currency': currency, 'balance': 0.0, 'available_trading': 0.0, 'reserve': 0.0, 'uuid': None, 'formatted': f"Error", 'available_formatted': f"Error", 'error': str(e)}
+            return {'currency': currency, 'error': str(e)}
 
     async def get_product_info(self, product_id: str) -> Dict:
         """Get product information and current price"""
         try:
-            product = self.client.get_product(product_id=product_id)
+            response = self._make_request('GET', f'/api/v3/brokerage/products/{product_id}')
+            
+            if 'error' in response:
+                return {'product_id': product_id, 'error': response['error']}
 
-            # Get current price from product ticker if available
-            try:
-                ticker_response = self.client.get_product_ticker(product_id=product_id)
-                current_price = float(getattr(ticker_response, 'price', 0))
-            except:
-                current_price = 0.0
+            # Get current price from ticker
+            ticker_response = self._make_request('GET', f'/api/v3/brokerage/products/{product_id}/ticker')
+            current_price = float(ticker_response.get('price', 0)) if 'error' not in ticker_response else 0
 
             return {
-                'product_id': getattr(product, 'product_id', product_id),
-                'base_currency': getattr(product, 'base_currency_id', ''),
-                'quote_currency': getattr(product, 'quote_currency_id', ''),
-                'status': getattr(product, 'status', 'unknown'),
+                'product_id': response.get('product_id', product_id),
+                'base_currency': response.get('base_currency_id', ''),
+                'quote_currency': response.get('quote_currency_id', ''),
+                'status': response.get('status', 'unknown'),
                 'current_price': current_price,
-                'min_market_funds': getattr(product, 'min_market_funds', '0'),
-                'max_market_funds': getattr(product, 'max_market_funds', '0'),
                 'formatted_price': f"${current_price:,.6f}" if current_price > 0 else "N/A"
             }
 
@@ -252,17 +332,12 @@ class TradingManager:
             return {'product_id': product_id, 'error': str(e)}
 
     def calculate_position_size(self, available_trading_balance: float, percentage: Optional[float] = None) -> Dict:
-        """Calculate position size based on available trading balance (after reserve) and percentage"""
+        """Calculate position size based on available trading balance and percentage"""
         try:
             position_pct = percentage or self.default_position_percentage
-
-            # Ensure percentage is within limits
             position_pct = max(0.1, min(position_pct, self.max_position_percentage))
-
-            # Calculate position size based on available trading balance (already excludes reserve)
             position_size = available_trading_balance * (position_pct / 100.0)
 
-            # Check minimum order size
             if position_size < self.min_order_usd:
                 return {
                     'valid': False,
@@ -287,39 +362,33 @@ class TradingManager:
 
     async def create_market_buy_order(self, product_id: str, quote_size: str,
                                     position_percentage: Optional[float] = None) -> Dict:
-        """Create a market buy order with safety validation"""
+        """Create a market buy order"""
         try:
-            # Validate trading conditions first
             validation = self.validate_trading_conditions()
             if not validation['valid']:
                 return {'success': False, 'error': validation['error'], 'message': validation['error']}
 
-            # Rate limiting
             await self.rate_limit_check()
-
-            # Check for duplicate orders (basic protection)
-            duplicate_check_window = 30  # seconds
-            current_time = datetime.now()
-            for order_info in self.pending_orders.values():
-                if (order_info['product_id'] == product_id and
-                    order_info['side'] == 'BUY' and
-                    order_info['quote_size'] == float(quote_size) and
-                    (current_time - order_info['created_at']).total_seconds() < duplicate_check_window):
-                    return {
-                        'success': False,
-                        'error': 'Duplicate order detected',
-                        'message': f'Similar order placed within {duplicate_check_window}s. Please wait.'
-                    }
 
             client_order_id = f"tg_buy_{product_id}_{int(datetime.now().timestamp())}"
 
-            order = self.client.market_order_buy(
-                client_order_id=client_order_id,
-                product_id=product_id,
-                quote_size=quote_size
-            )
+            order_data = {
+                "client_order_id": client_order_id,
+                "product_id": product_id,
+                "side": "BUY",
+                "order_configuration": {
+                    "market_market_ioc": {
+                        "quote_size": quote_size
+                    }
+                }
+            }
 
-            order_id = getattr(order, 'order_id', 'unknown')
+            response = self._make_request('POST', '/api/v3/brokerage/orders', json_data=order_data)
+
+            if 'error' in response:
+                return {'success': False, 'error': response['error'], 'message': f"Failed: {response['error']}"}
+
+            order_id = response.get('order_id', 'unknown')
 
             # Track the order
             order_info = {
@@ -335,7 +404,7 @@ class TradingManager:
             }
             self.pending_orders[order_id] = order_info
 
-            # Update daily trade count
+            # Update trade count
             today = str(date.today())
             if self.last_trade_date != today:
                 self.daily_trade_count = 0
@@ -343,11 +412,9 @@ class TradingManager:
 
             self.daily_trade_count += 1
             self.save_trade_statistics()
-
-            # Log the trade
             self.log_trade(order_info)
 
-            logger.info(f'Market buy order created: {order_id} for {quote_size} USD of {product_id} (Trade {self.daily_trade_count}/{self.max_daily_trades})')
+            logger.info(f'Market buy order created: {order_id} for {quote_size} USD of {product_id}')
 
             return {
                 'success': True,
@@ -363,48 +430,37 @@ class TradingManager:
 
         except Exception as e:
             logger.error(f'Error creating market buy order: {e}')
-            return {
-                'success': False,
-                'error': str(e),
-                'message': f'Failed to place buy order: {str(e)}'
-            }
+            return {'success': False, 'error': str(e), 'message': f'Failed: {str(e)}'}
 
     async def create_market_sell_order(self, product_id: str, base_size: str) -> Dict:
-        """Create a market sell order with safety validation"""
+        """Create a market sell order"""
         try:
-            # Validate trading conditions first
             validation = self.validate_trading_conditions()
             if not validation['valid']:
                 return {'success': False, 'error': validation['error'], 'message': validation['error']}
 
-            # Rate limiting
             await self.rate_limit_check()
-
-            # Check for duplicate orders (basic protection)
-            duplicate_check_window = 30  # seconds
-            current_time = datetime.now()
-            for order_info in self.pending_orders.values():
-                if (order_info['product_id'] == product_id and
-                    order_info['side'] == 'SELL' and
-                    order_info.get('base_size') == float(base_size) and
-                    (current_time - order_info['created_at']).total_seconds() < duplicate_check_window):
-                    return {
-                        'success': False,
-                        'error': 'Duplicate order detected',
-                        'message': f'Similar order placed within {duplicate_check_window}s. Please wait.'
-                    }
 
             client_order_id = f"tg_sell_{product_id}_{int(datetime.now().timestamp())}"
 
-            order = self.client.market_order_sell(
-                client_order_id=client_order_id,
-                product_id=product_id,
-                base_size=base_size
-            )
+            order_data = {
+                "client_order_id": client_order_id,
+                "product_id": product_id,
+                "side": "SELL",
+                "order_configuration": {
+                    "market_market_ioc": {
+                        "base_size": base_size
+                    }
+                }
+            }
 
-            order_id = getattr(order, 'order_id', 'unknown')
+            response = self._make_request('POST', '/api/v3/brokerage/orders', json_data=order_data)
 
-            # Track the order
+            if 'error' in response:
+                return {'success': False, 'error': response['error'], 'message': f"Failed: {response['error']}"}
+
+            order_id = response.get('order_id', 'unknown')
+
             order_info = {
                 'order_id': order_id,
                 'client_order_id': client_order_id,
@@ -417,7 +473,6 @@ class TradingManager:
             }
             self.pending_orders[order_id] = order_info
 
-            # Update daily trade count
             today = str(date.today())
             if self.last_trade_date != today:
                 self.daily_trade_count = 0
@@ -425,31 +480,24 @@ class TradingManager:
 
             self.daily_trade_count += 1
             self.save_trade_statistics()
-
-            # Log the trade
             self.log_trade(order_info)
 
-            logger.info(f'Market sell order created: {order_id} for {base_size} of {product_id} (Trade {self.daily_trade_count}/{self.max_daily_trades})')
+            logger.info(f'Market sell order created: {order_id}')
 
             return {
                 'success': True,
                 'order_id': order_id,
-                'client_order_id': client_order_id,
                 'product_id': product_id,
                 'base_size': float(base_size),
                 'type': 'market_sell',
                 'side': 'SELL',
-                'message': f'Market sell order placed for {base_size} {product_id.split("-")[0]}',
+                'message': f'Market sell order placed',
                 'daily_trades': f'{self.daily_trade_count}/{self.max_daily_trades}'
             }
 
         except Exception as e:
             logger.error(f'Error creating market sell order: {e}')
-            return {
-                'success': False,
-                'error': str(e),
-                'message': f'Failed to place sell order: {str(e)}'
-            }
+            return {'success': False, 'error': str(e), 'message': f'Failed: {str(e)}'}
 
     async def create_limit_sell_order(self, product_id: str, base_size: str,
                                     limit_price: str, post_only: bool = True) -> Dict:
@@ -457,288 +505,110 @@ class TradingManager:
         try:
             client_order_id = f"tg_limit_sell_{product_id}_{int(datetime.now().timestamp())}"
 
-            order = self.client.limit_order_gtc_sell(
-                client_order_id=client_order_id,
-                product_id=product_id,
-                base_size=base_size,
-                limit_price=limit_price,
-                post_only=post_only
-            )
+            order_data = {
+                "client_order_id": client_order_id,
+                "product_id": product_id,
+                "side": "SELL",
+                "order_configuration": {
+                    "limit_limit_gtc": {
+                        "base_size": base_size,
+                        "limit_price": limit_price,
+                        "post_only": post_only
+                    }
+                }
+            }
 
-            order_id = getattr(order, 'order_id', 'unknown')
+            response = self._make_request('POST', '/api/v3/brokerage/orders', json_data=order_data)
 
-            # Track the order
+            if 'error' in response:
+                return {'success': False, 'error': response['error']}
+
+            order_id = response.get('order_id', 'unknown')
             self.pending_orders[order_id] = {
                 'order_id': order_id,
-                'client_order_id': client_order_id,
                 'product_id': product_id,
                 'side': 'SELL',
                 'type': 'limit',
                 'base_size': float(base_size),
                 'limit_price': float(limit_price),
-                'created_at': datetime.now(),
-                'status': 'pending'
+                'created_at': datetime.now()
             }
-
-            logger.info(f'Limit sell order created: {order_id} for {base_size} {product_id} at ${limit_price}')
 
             return {
                 'success': True,
                 'order_id': order_id,
-                'client_order_id': client_order_id,
                 'product_id': product_id,
                 'base_size': float(base_size),
                 'limit_price': float(limit_price),
                 'type': 'limit_sell',
-                'message': f'Limit sell order placed for {base_size} {product_id.split("-")[0]} at ${limit_price}'
+                'message': f'Limit sell order placed at ${limit_price}'
             }
 
         except Exception as e:
             logger.error(f'Error creating limit sell order: {e}')
-            return {
-                'success': False,
-                'error': str(e),
-                'message': f'Failed to place limit sell order: {str(e)}'
-            }
+            return {'success': False, 'error': str(e)}
 
     async def cancel_order(self, order_id: str) -> Dict:
         """Cancel an order"""
         try:
-            result = self.client.cancel_orders(order_ids=[order_id])
-            results = getattr(result, 'results', [])
+            response = self._make_request('POST', '/api/v3/brokerage/orders/batch_cancel', 
+                                         json_data={"order_ids": [order_id]})
 
-            if results and len(results) > 0:
-                cancel_result = results[0]
-                success = getattr(cancel_result, 'success', False)
+            if 'error' in response:
+                return {'success': False, 'order_id': order_id, 'error': response['error']}
 
-                if success:
-                    # Remove from pending orders
-                    if order_id in self.pending_orders:
-                        del self.pending_orders[order_id]
-
-                    logger.info(f'Order cancelled successfully: {order_id}')
-                    return {
-                        'success': True,
-                        'order_id': order_id,
-                        'message': f'Order {order_id[:8]}... cancelled successfully'
-                    }
-                else:
-                    error_msg = getattr(cancel_result, 'failure_reason', 'Unknown error')
-                    return {
-                        'success': False,
-                        'order_id': order_id,
-                        'error': error_msg,
-                        'message': f'Failed to cancel order: {error_msg}'
-                    }
-            else:
-                return {
-                    'success': False,
-                    'order_id': order_id,
-                    'error': 'No response from API',
-                    'message': 'Failed to cancel order: No response from API'
-                }
-
-        except Exception as e:
-            logger.error(f'Error cancelling order {order_id}: {e}')
-            return {
-                'success': False,
-                'order_id': order_id,
-                'error': str(e),
-                'message': f'Failed to cancel order: {str(e)}'
-            }
-
-    async def edit_order(self, order_id: str, new_price: Optional[str] = None, new_size: Optional[str] = None) -> Dict:
-        """Edit an existing order (price and/or size)"""
-        try:
-            # Validate trading conditions first
-            validation = self.validate_trading_conditions()
-            if not validation['valid']:
-                return {'success': False, 'error': validation['error'], 'message': validation['error']}
-
-            # Rate limiting
-            await self.rate_limit_check()
-
-            # Get current order details first
-            current_order = await self.get_order_status(order_id)
-            if 'error' in current_order:
-                return {
-                    'success': False,
-                    'order_id': order_id,
-                    'error': current_order['error'],
-                    'message': f'Cannot edit order: {current_order["error"]}'
-                }
-
-            # Check if order is still editable
-            if current_order['status'] not in ['OPEN', 'PENDING']:
-                return {
-                    'success': False,
-                    'order_id': order_id,
-                    'error': f'Order status is {current_order["status"]}',
-                    'message': f'Cannot edit order: status is {current_order["status"]}'
-                }
-
-            # Prepare edit parameters
-            edit_params = {'order_id': order_id}
-            if new_price:
-                edit_params['price'] = new_price
-            if new_size:
-                edit_params['size'] = new_size
-
-            # Use the edit order method from Coinbase SDK
-            result = self.client.edit_order(**edit_params)
-
-            # Check if edit was successful
-            success = getattr(result, 'success', False)
-            if success:
-                # Update our tracking if we have this order
+            results = response.get('results', [])
+            if results and results[0].get('success'):
                 if order_id in self.pending_orders:
-                    if new_price:
-                        self.pending_orders[order_id]['limit_price'] = float(new_price)
-                    if new_size:
-                        if 'quote_size' in self.pending_orders[order_id]:
-                            self.pending_orders[order_id]['quote_size'] = float(new_size)
-                        if 'base_size' in self.pending_orders[order_id]:
-                            self.pending_orders[order_id]['base_size'] = float(new_size)
-
-                logger.info(f'Order edited successfully: {order_id}')
-                return {
-                    'success': True,
-                    'order_id': order_id,
-                    'message': f'Order {order_id[:8]}... edited successfully',
-                    'new_price': new_price,
-                    'new_size': new_size
-                }
+                    del self.pending_orders[order_id]
+                return {'success': True, 'order_id': order_id, 'message': 'Order cancelled'}
             else:
-                error_msg = getattr(result, 'failure_reason', 'Unknown error')
-                return {
-                    'success': False,
-                    'order_id': order_id,
-                    'error': error_msg,
-                    'message': f'Failed to edit order: {error_msg}'
-                }
+                return {'success': False, 'order_id': order_id, 'error': 'Cancel failed'}
 
         except Exception as e:
-            logger.error(f'Error editing order {order_id}: {e}')
-            return {
-                'success': False,
-                'order_id': order_id,
-                'error': str(e),
-                'message': f'Failed to edit order: {str(e)}'
-            }
-
-    async def get_fills(self, order_id: Optional[str] = None, product_id: Optional[str] = None, limit: int = 50) -> List[Dict]:
-        """Get fill (execution) history for orders"""
-        try:
-            await self.rate_limit_check()
-
-            # Build parameters for the fills request
-            params = {'limit': limit}
-            if order_id:
-                params['order_id'] = order_id
-            if product_id:
-                params['product_id'] = product_id
-
-            fills_response = self.client.get_fills(**params)
-            fills = getattr(fills_response, 'fills', [])
-
-            fill_list = []
-            for fill in fills:
-                fill_info = {
-                    'trade_id': getattr(fill, 'trade_id', 'unknown'),
-                    'order_id': getattr(fill, 'order_id', 'unknown'),
-                    'product_id': getattr(fill, 'product_id', 'unknown'),
-                    'side': getattr(fill, 'side', 'unknown'),
-                    'size': getattr(fill, 'size', '0'),
-                    'price': getattr(fill, 'price', '0'),
-                    'fee': getattr(fill, 'fee', '0'),
-                    'trade_time': getattr(fill, 'trade_time', ''),
-                    'user_id': getattr(fill, 'user_id', ''),
-                    'sequence_timestamp': getattr(fill, 'sequence_timestamp', '')
-                }
-                fill_list.append(fill_info)
-
-            return fill_list
-
-        except Exception as e:
-            logger.error(f'Error getting fills: {e}')
-            return []
-
-    async def get_order_status(self, order_id: str) -> Dict:
-        """Get current status of an order"""
-        try:
-            order = self.client.get_order(order_id=order_id)
-
-            return {
-                'order_id': getattr(order, 'order_id', order_id),
-                'status': getattr(order, 'status', 'unknown'),
-                'side': getattr(order, 'side', 'unknown'),
-                'product_id': getattr(order, 'product_id', 'unknown'),
-                'filled_size': getattr(order, 'filled_size', '0'),
-                'filled_value': getattr(order, 'filled_value', '0'),
-                'average_filled_price': getattr(order, 'average_filled_price', '0'),
-                'created_time': getattr(order, 'created_time', ''),
-                'completion_percentage': getattr(order, 'completion_percentage', '0')
-            }
-
-        except Exception as e:
-            logger.error(f'Error getting order status for {order_id}: {e}')
-            return {
-                'order_id': order_id,
-                'error': str(e),
-                'status': 'error'
-            }
+            logger.error(f'Error cancelling order: {e}')
+            return {'success': False, 'order_id': order_id, 'error': str(e)}
 
     async def get_open_orders(self, product_id: Optional[str] = None) -> List[Dict]:
-        """Get all open orders, optionally filtered by product"""
+        """Get all open orders"""
         try:
-            orders = self.client.list_orders(
-                product_id=product_id,
-                order_status=['OPEN', 'PENDING'],
-                limit=50
-            )
+            path = '/api/v3/brokerage/orders/historical/batch?limit=50'
+            if product_id:
+                path += f'&product_id={product_id}'
+            path += '&order_status=OPEN&order_status=PENDING'
+            
+            response = self._make_request('GET', path)
+            
+            if 'error' in response:
+                return []
 
-            order_list = getattr(orders, 'orders', [])
-
-            open_orders = []
-            for order in order_list:
-                order_info = {
-                    'order_id': getattr(order, 'order_id', 'unknown'),
-                    'product_id': getattr(order, 'product_id', 'unknown'),
-                    'side': getattr(order, 'side', 'unknown'),
-                    'status': getattr(order, 'status', 'unknown'),
-                    'size': getattr(order, 'size', '0'),
-                    'filled_size': getattr(order, 'filled_size', '0'),
-                    'price': getattr(order, 'price', '0'),
-                    'created_time': getattr(order, 'created_time', ''),
-                    'order_type': getattr(order, 'order_type', 'unknown')
-                }
-                open_orders.append(order_info)
-
-            return open_orders
+            return response.get('orders', [])
 
         except Exception as e:
             logger.error(f'Error getting open orders: {e}')
             return []
 
     async def get_positions(self) -> List[Dict]:
-        """Get current positions (non-zero balances)"""
+        """Get current positions"""
         try:
-            response = self.client.get_accounts()
-            accounts = response.accounts if hasattr(response, 'accounts') else []
+            response = self._make_request('GET', '/api/v3/brokerage/accounts')
+            
+            if 'error' in response:
+                return []
 
+            accounts = response.get('accounts', [])
             positions = []
+            
             for account in accounts:
-                currency = getattr(account, 'currency', '')
-                balance_obj = getattr(account, 'available_balance', None)
-                balance = float(balance_obj.value) if balance_obj and hasattr(balance_obj, 'value') else 0.0
+                currency = account.get('currency', '')
+                balance = float(account.get('available_balance', {}).get('value', 0))
 
-                # Only include non-zero, non-USD balances
                 if balance > 0 and currency != 'USD':
                     positions.append({
                         'currency': currency,
                         'balance': balance,
-                        'uuid': getattr(account, 'uuid', None),
-                        'product_id': f"{currency}-USD"  # Assume USD pairs
+                        'uuid': account.get('uuid'),
+                        'product_id': f"{currency}-USD"
                     })
 
             return positions
@@ -746,6 +616,73 @@ class TradingManager:
         except Exception as e:
             logger.error(f'Error getting positions: {e}')
             return []
+
+    async def get_fills(self, order_id: Optional[str] = None, product_id: Optional[str] = None, limit: int = 50) -> List[Dict]:
+        """Get fill history"""
+        try:
+            await self.rate_limit_check()
+            
+            path = f'/api/v3/brokerage/orders/historical/fills?limit={limit}'
+            if order_id:
+                path += f'&order_id={order_id}'
+            if product_id:
+                path += f'&product_id={product_id}'
+            
+            response = self._make_request('GET', path)
+            
+            if 'error' in response:
+                return []
+
+            return response.get('fills', [])
+
+        except Exception as e:
+            logger.error(f'Error getting fills: {e}')
+            return []
+
+    async def edit_order(self, order_id: str, new_price: Optional[str] = None, new_size: Optional[str] = None) -> Dict:
+        """Edit an existing order"""
+        try:
+            validation = self.validate_trading_conditions()
+            if not validation['valid']:
+                return {'success': False, 'error': validation['error']}
+
+            await self.rate_limit_check()
+
+            data = {'order_id': order_id}
+            if new_price:
+                data['price'] = new_price
+            if new_size:
+                data['size'] = new_size
+
+            response = self._make_request('POST', '/api/v3/brokerage/orders/edit', json_data=data)
+
+            if 'error' in response:
+                return {'success': False, 'error': response['error']}
+
+            return {'success': True, 'order_id': order_id, 'message': 'Order edited'}
+
+        except Exception as e:
+            logger.error(f'Error editing order: {e}')
+            return {'success': False, 'error': str(e)}
+
+    async def get_order_status(self, order_id: str) -> Dict:
+        """Get order status"""
+        try:
+            response = self._make_request('GET', f'/api/v3/brokerage/orders/historical/{order_id}')
+            
+            if 'error' in response:
+                return {'order_id': order_id, 'error': response['error'], 'status': 'error'}
+
+            return {
+                'order_id': response.get('order_id', order_id),
+                'status': response.get('status', 'unknown'),
+                'side': response.get('side', 'unknown'),
+                'product_id': response.get('product_id', 'unknown')
+            }
+
+        except Exception as e:
+            logger.error(f'Error getting order status: {e}')
+            return {'order_id': order_id, 'error': str(e), 'status': 'error'}
 
     def format_order_summary(self, order_info: Dict) -> str:
         """Format order information for display"""
