@@ -31,7 +31,83 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class PriceTracker:
-    """Tracks price history and detects spikes for a single crypto"""
+    """
+    Tracks price history and detects spikes for a single crypto
+
+    FUTURE ENHANCEMENT - DUMP RECOVERY TRACKING:
+    ============================================
+    When a DUMP is detected, track the recovery at 5% intervals to catch bounce opportunities.
+
+    Implementation Strategy:
+    1. Detect Dump Event:
+       - When spike_type == "dump" and pct_change < -PRICE_SPIKE_THRESHOLD
+       - Start dump recovery tracking mode
+       - Record dump_bottom_price (lowest price during dump)
+       - Record dump_start_price (price before dump)
+
+    2. Track Recovery at 5% Intervals:
+       Recovery milestones from dump bottom:
+       - +5%:  "Bounce detected - early recovery"
+       - +10%: "Strong bounce - continued recovery"
+       - +15%: "Significant recovery"
+       - +20%: "Major recovery - potential reversal"
+       - +25%: "Full reversal momentum"
+
+    3. Alert Logic:
+       Send alerts at each 5% milestone with:
+       - Current price
+       - Recovery percentage from dump bottom
+       - Distance from original pre-dump price
+       - Volume analysis (if available)
+       - Recommendation: "Consider entry" or "Wait for confirmation"
+
+    4. Exit Recovery Tracking When:
+       - Price recovers to within 2% of pre-dump price (full recovery)
+       - Price drops back down 3% from recovery peak (failed bounce)
+       - 30 minutes elapsed without further recovery (stalled)
+
+    5. Configuration (add to environment):
+       - DUMP_RECOVERY_ENABLED: bool (default True)
+       - DUMP_RECOVERY_INTERVAL: float (default 5.0% - alert every 5%)
+       - DUMP_RECOVERY_TIMEOUT_MINUTES: int (default 30)
+       - DUMP_RECOVERY_FAILED_RETRACE: float (default 3.0% - exit if drops 3% from peak)
+
+    6. Database Schema Additions:
+       Add to spike_alerts table:
+       - dump_bottom_price REAL          # Lowest price during dump
+       - recovery_peak_price REAL        # Highest price during recovery
+       - recovery_peak_pct REAL          # Max recovery percentage reached
+       - recovery_alerts_sent INTEGER    # Count of 5% milestone alerts sent
+       - recovery_outcome TEXT           # "full_recovery", "failed", "stalled"
+       - recovery_duration_seconds REAL  # Time from bottom to outcome
+
+    7. Alert Format Example:
+       🟢 RECOVERY ALERT: BTC-USD
+       Dump Recovery: +10.5% from bottom
+       Bottom: $58,245 → Current: $64,360
+       Pre-dump: $65,800 (still -2.2% from origin)
+       Status: Strong bounce detected
+       Recommendation: Monitor for entry on continued momentum
+
+    8. Trading Strategy Integration:
+       - Paper trading bot could enter on +10% recovery (confirmed bounce)
+       - Use tight stop loss (3-5% below entry)
+       - Target: Return to 95% of pre-dump price
+       - Higher risk but potential for 10-20% gains on successful V-shaped recovery
+
+    Rationale:
+    - Dumps often overcorrect due to panic selling
+    - Strong bounces frequently follow dumps when no fundamental issues
+    - 5% intervals provide actionable entry points
+    - V-shaped recoveries can produce quick 15-25% gains
+    - Failed bounces are identified quickly to minimize risk
+
+    Implementation Location:
+    - Add dump_recovery_tracking flag to __init__
+    - Modify _track_momentum() to handle dump recovery separately
+    - Create _track_dump_recovery() method for recovery logic
+    - Emit recovery milestone events to telegram bot
+    """
     def __init__(self, symbol: str, window_minutes: int, threshold: float):
         self.symbol = symbol
         self.window_seconds = window_minutes * 60
@@ -49,6 +125,14 @@ class PriceTracker:
         self.momentum_start_time = 0
         self.momentum_peak_time = 0
         self.peak_change = 0
+
+        # TODO: Add dump recovery tracking fields
+        # self.dump_recovery_tracking = False
+        # self.dump_start_price = 0
+        # self.dump_bottom_price = 0
+        # self.dump_bottom_time = 0
+        # self.recovery_peak_price = 0
+        # self.last_recovery_milestone = 0  # Track last 5% milestone alerted
 
     def add_price(self, price: float, timestamp: float) -> Optional[dict]:
         """Add price to history and check for spike"""
@@ -98,6 +182,15 @@ class PriceTracker:
             self.momentum_peak_time = timestamp
             self.peak_change = pct_change
             
+            # TODO: If this is a DUMP, initiate dump recovery tracking
+            # if pct_change < 0:  # Dump detected
+            #     self.dump_recovery_tracking = True
+            #     self.dump_start_price = oldest_price
+            #     self.dump_bottom_price = newest_price
+            #     self.dump_bottom_time = timestamp
+            #     self.last_recovery_milestone = 0
+            #     logger.info(f"{self.symbol}: Starting dump recovery tracking from ${newest_price:.6f}")
+
             return {
                 "symbol": self.symbol,
                 "spike_type": "pump" if pct_change > 0 else "dump",
@@ -167,8 +260,101 @@ class PriceTracker:
             self.peak_change = 0
             
             return result
-            
+
         return None
+
+    # TODO: Implement dump recovery tracking method
+    # def _track_dump_recovery(self, current_price: float, timestamp: float) -> Optional[dict]:
+    #     """
+    #     Track recovery from dump at 5% intervals
+    #
+    #     Returns alert dict when:
+    #     - Price crosses 5% recovery milestone
+    #     - Full recovery achieved (within 2% of pre-dump price)
+    #     - Failed bounce detected (3% retrace from recovery peak)
+    #     - Recovery stalls (30 min timeout)
+    #     """
+    #     # Update dump bottom if price continues falling
+    #     if current_price < self.dump_bottom_price:
+    #         self.dump_bottom_price = current_price
+    #         self.dump_bottom_time = timestamp
+    #         return None
+    #
+    #     # Calculate recovery percentage from bottom
+    #     recovery_pct = ((current_price - self.dump_bottom_price) / self.dump_bottom_price) * 100
+    #
+    #     # Check for 5% milestone crossings
+    #     current_milestone = int(recovery_pct / 5) * 5  # Round down to nearest 5%
+    #     if current_milestone > self.last_recovery_milestone and current_milestone >= 5:
+    #         self.last_recovery_milestone = current_milestone
+    #
+    #         # Calculate distance from pre-dump price
+    #         distance_from_origin = ((current_price - self.dump_start_price) / self.dump_start_price) * 100
+    #
+    #         return {
+    #             "symbol": self.symbol,
+    #             "event_type": "dump_recovery_milestone",
+    #             "recovery_pct": recovery_pct,
+    #             "milestone": current_milestone,
+    #             "current_price": current_price,
+    #             "dump_bottom": self.dump_bottom_price,
+    #             "pre_dump_price": self.dump_start_price,
+    #             "distance_from_origin_pct": distance_from_origin,
+    #             "timestamp": datetime.fromtimestamp(timestamp).isoformat(),
+    #             "recovery_status": self._get_recovery_status(recovery_pct)
+    #         }
+    #
+    #     # Check for full recovery
+    #     distance_from_origin_pct = ((current_price - self.dump_start_price) / self.dump_start_price) * 100
+    #     if distance_from_origin_pct >= -2.0:  # Within 2% of pre-dump price
+    #         result = {
+    #             "symbol": self.symbol,
+    #             "event_type": "dump_recovery_complete",
+    #             "recovery_pct": recovery_pct,
+    #             "outcome": "full_recovery",
+    #             "timestamp": datetime.fromtimestamp(timestamp).isoformat()
+    #         }
+    #         self._reset_dump_recovery()
+    #         return result
+    #
+    #     # Check for failed bounce (3% retrace from peak)
+    #     if current_price > self.recovery_peak_price:
+    #         self.recovery_peak_price = current_price
+    #     retrace_from_peak = ((self.recovery_peak_price - current_price) / self.recovery_peak_price) * 100
+    #     if retrace_from_peak >= 3.0:
+    #         result = {
+    #             "symbol": self.symbol,
+    #             "event_type": "dump_recovery_failed",
+    #             "outcome": "failed_bounce",
+    #             "timestamp": datetime.fromtimestamp(timestamp).isoformat()
+    #         }
+    #         self._reset_dump_recovery()
+    #         return result
+    #
+    #     return None
+    #
+    # def _get_recovery_status(self, recovery_pct: float) -> str:
+    #     """Get human-readable status for recovery percentage"""
+    #     if recovery_pct >= 25:
+    #         return "Full reversal momentum"
+    #     elif recovery_pct >= 20:
+    #         return "Major recovery - potential reversal"
+    #     elif recovery_pct >= 15:
+    #         return "Significant recovery"
+    #     elif recovery_pct >= 10:
+    #         return "Strong bounce - continued recovery"
+    #     elif recovery_pct >= 5:
+    #         return "Bounce detected - early recovery"
+    #     return "Monitoring"
+    #
+    # def _reset_dump_recovery(self):
+    #     """Reset dump recovery tracking state"""
+    #     self.dump_recovery_tracking = False
+    #     self.dump_start_price = 0
+    #     self.dump_bottom_price = 0
+    #     self.dump_bottom_time = 0
+    #     self.recovery_peak_price = 0
+    #     self.last_recovery_milestone = 0
 
 class PriceSpikeBot:
     """Main bot that monitors WebSocket feed for price spikes"""
