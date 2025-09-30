@@ -58,6 +58,173 @@ DEFAULT_POSITION_PERCENTAGE = float(os.getenv('DEFAULT_POSITION_PERCENTAGE', '2.
 # Store pending custom buy contexts (chat_id -> product_id)
 pending_custom_buys = {}
 
+# TODO: IMPLEMENT PERSISTENT POSITION CARD FEATURE
+# =================================================
+#
+# FEATURE REQUIREMENTS:
+# 1. When bot enters a trade, send a "Position Card" message to Telegram
+# 2. Card stays at bottom of chat (pin it or edit existing message)
+# 3. Update card in real-time with current price and P&L
+# 4. Include action buttons: "Set Limit Order", "Sell at Market"
+# 5. Add confirmation step for all trades to prevent accidents
+# 6. Cancel any existing orders when new order is placed
+#
+# IMPLEMENTATION PLAN:
+# ====================
+#
+# A. Data Structure:
+# ------------------
+# active_position_cards = {
+#     'BTC-USD': {
+#         'message_id': 12345,
+#         'chat_id': '8005083771',
+#         'entry_price': 64250.50,
+#         'entry_time': '2025-09-30T16:00:00',
+#         'quantity': 0.001,
+#         'cost_basis': 64.25,
+#         'current_price': 65100.00,
+#         'pnl_usd': 0.85,
+#         'pnl_pct': 1.32,
+#         'last_update': time.time(),
+#         'pending_action': None  # or {'type': 'limit_order', 'price': 66000, 'awaiting_confirm': True}
+#     }
+# }
+#
+# B. Position Card Message Format:
+# --------------------------------
+# 📊 ACTIVE POSITION: BTC-USD
+#
+# Entry: $64,250.50 @ 16:00:00
+# Quantity: 0.001 BTC
+# Cost Basis: $64.25
+#
+# Current Price: $65,100.00 📈
+# Unrealized P&L: +$0.85 (+1.32%)
+#
+# [Set Limit Order] [Sell at Market]
+#
+# C. Real-time Price Updates:
+# ---------------------------
+# - Listen to ticker_update events from backend
+# - Update card every 5 seconds (rate limit to avoid API spam)
+# - Use bot.edit_message_text() to update in-place
+# - Calculate P&L: (current_price - entry_price) * quantity - fees
+#
+# D. Button Handlers:
+# -------------------
+# Callback data format: "pos_action:{product_id}:{action}:{step}"
+#
+# Actions:
+# - "pos_action:BTC-USD:limit:prompt" → Ask user to enter limit price
+# - "pos_action:BTC-USD:limit:confirm:66000" → Show confirmation
+# - "pos_action:BTC-USD:limit:execute:66000" → Place limit order
+# - "pos_action:BTC-USD:market:confirm" → Show market sell confirmation
+# - "pos_action:BTC-USD:market:execute" → Execute market sell
+# - "pos_action:BTC-USD:cancel" → Cancel pending action
+#
+# E. Confirmation Flow:
+# ---------------------
+# Step 1: User clicks "Set Limit Order"
+#   → Edit card to show: "Enter limit price (current: $65,100)"
+#   → Wait for user message with price
+#
+# Step 2: User types "66000"
+#   → Show confirmation:
+#     "Confirm Limit Sell Order
+#      Product: BTC-USD
+#      Quantity: 0.001 BTC
+#      Limit Price: $66,000.00
+#      Expected Proceeds: $66.00
+#      [✅ Confirm] [❌ Cancel]"
+#
+# Step 3: User clicks "✅ Confirm"
+#   → Cancel any existing open orders for this product
+#   → Place new limit order
+#   → Update position card with order status
+#
+# F. Order Management:
+# --------------------
+# async def cancel_existing_orders(product_id: str):
+#     """Cancel all open orders for a product"""
+#     orders = await trading_manager.list_orders(product_id=product_id, status='OPEN')
+#     for order in orders:
+#         await trading_manager.cancel_order(order['order_id'])
+#         logger.info(f"Cancelled order {order['order_id']} for {product_id}")
+#
+# G. Position Tracking Integration:
+# ---------------------------------
+# - When paper_trading_bot opens position → Create position card
+# - On ticker_update → Update position card
+# - When position closed → Archive card (edit to show final P&L, remove buttons)
+# - Store position cards in SQLite for persistence across restarts
+#
+# H. Message Handler for Limit Price Input:
+# -----------------------------------------
+# pending_limit_orders = {
+#     'chat_id': {
+#         'product_id': 'BTC-USD',
+#         'message_id': 12345,  # Position card to update
+#         'awaiting_price': True
+#     }
+# }
+#
+# async def handle_limit_price_input(update, context):
+#     if chat_id in pending_limit_orders:
+#         try:
+#             price = float(update.message.text.strip())
+#             # Show confirmation
+#             await show_limit_order_confirmation(chat_id, product_id, price)
+#         except ValueError:
+#             await update.message.reply_text("Invalid price. Please enter a number.")
+#
+# I. Database Schema for Position Cards:
+# --------------------------------------
+# CREATE TABLE active_position_cards (
+#     product_id TEXT PRIMARY KEY,
+#     message_id INTEGER NOT NULL,
+#     chat_id TEXT NOT NULL,
+#     entry_price REAL NOT NULL,
+#     entry_time TEXT NOT NULL,
+#     quantity REAL NOT NULL,
+#     cost_basis REAL NOT NULL,
+#     last_update_time REAL NOT NULL,
+#     status TEXT DEFAULT 'active'  -- 'active', 'pending_action', 'closed'
+# );
+#
+# J. Safety Features:
+# ------------------
+# 1. Double confirmation for market sells (high risk)
+# 2. Price validation for limit orders (warn if >10% from current)
+# 3. Minimum order size validation ($10 minimum)
+# 4. Daily trade limit enforcement
+# 5. Rate limiting on card updates (max 1 update per 5 seconds)
+# 6. Emergency stop button (accessible from position card)
+#
+# K. Implementation Files to Create/Modify:
+# -----------------------------------------
+# - telegram_bot.py: Add position card handlers
+# - trading_manager.py: Add cancel_orders(), list_orders() methods
+# - position_card_manager.py: NEW - Dedicated class for card lifecycle
+# - confirmation_flow.py: NEW - Handle multi-step confirmations
+#
+# L. Testing Checklist:
+# --------------------
+# [ ] Create position card on trade entry
+# [ ] Update card with real-time prices
+# [ ] Set limit order with confirmation
+# [ ] Sell at market with double confirmation
+# [ ] Cancel existing orders before new order
+# [ ] Handle network failures gracefully
+# [ ] Persist cards across bot restarts
+# [ ] Archive card on position close
+# [ ] Multiple simultaneous positions (multiple cards)
+# [ ] Button spam protection
+#
+# PRIORITY: HIGH - This is a critical UX feature for active trading
+# COMPLEXITY: HIGH - Requires state management, real-time updates, and order orchestration
+# ESTIMATED EFFORT: 8-12 hours for full implementation
+# DEPENDENCIES: trading_manager methods, WebSocket price feed integration
+
 
 def format_price_alert(data):
     """Format price alert with trading buttons"""
