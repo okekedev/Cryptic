@@ -13,8 +13,12 @@ import socketio
 from enhanced_price_tracker import EnhancedPriceTracker
 
 # Configuration from environment variables
+<<<<<<< HEAD
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:3000")
 TELEGRAM_SOCKET_URL = os.getenv("TELEGRAM_SOCKET_URL", "http://telegram-bot:8081")
+=======
+BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:5000")
+>>>>>>> 11ac33eb168ae508ae96b77998a11f2e593c1e87
 PRICE_SPIKE_THRESHOLD = float(os.getenv("PRICE_SPIKE_THRESHOLD", "5.0"))
 PRICE_WINDOW_MINUTES = int(os.getenv("PRICE_WINDOW_MINUTES", "5"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
@@ -284,13 +288,14 @@ class PriceSpikeBot:
                 logger.info(f"⚡ Alert sent directly to Telegram: {spike_data['symbol']} {event_type}")
             except Exception as e:
                 logger.error(f"Failed to emit direct alert to Telegram: {e}")
-                # Fallback: try backend relay if direct connection fails
-                if hasattr(self, 'backend_sio') and self.backend_sio and self.backend_sio.connected:
-                    try:
-                        self.backend_sio.emit('spike_alert', spike_data)
-                        logger.info(f"Alert sent via backend relay (fallback): {spike_data['symbol']} {event_type}")
-                    except Exception as e2:
-                        logger.error(f"Failed to emit via backend relay: {e2}")
+
+        # ALWAYS send to backend relay for other consumers (paper-trading bot, etc.)
+        if hasattr(self, 'backend_sio') and self.backend_sio and self.backend_sio.connected:
+            try:
+                self.backend_sio.emit('spike_alert', spike_data)
+                logger.info(f"⚡ Alert sent to backend relay: {spike_data['symbol']} {event_type}")
+            except Exception as e:
+                logger.error(f"Failed to emit to backend relay: {e}")
         
         if WEBHOOK_URL:
             try:
