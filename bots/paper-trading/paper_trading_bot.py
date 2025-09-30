@@ -66,6 +66,14 @@ class Position:
     - needs_reconciliation: bool       # Flag for post-reconnect verification
     - stale_threshold_seconds: int     # Max age before requiring fresh exchange data
 
+    All-Time High (ATH) Detection:
+    - all_time_high: float             # Historical ATH price from Coinbase API
+    - ath_mode_active: bool            # True when price is within ATH_PROXIMITY_PERCENT of ATH
+    - ath_tight_stop: float            # Aggressive trailing stop (1% default) when near ATH
+    - ath_first_detected_at: str       # ISO timestamp when ATH proximity first detected
+    - ath_proximity_percent: float     # Configurable threshold to trigger ATH mode (default 1.0%)
+    - ath_tight_stop_percent: float    # Configurable tight stop percentage (default 1.0%)
+
     Usage Pattern:
     1. On entry: Store order_id immediately after market buy
     2. On fill confirmation: Update actual_entry_price and actual_quantity
@@ -99,7 +107,60 @@ class Position:
         return False
 
     def should_exit(self, current_price: float) -> tuple[bool, str]:
-        """Check if position should be exited. Returns (should_exit, reason)"""
+        """
+        Check if position should be exited. Returns (should_exit, reason)
+
+        FUTURE ENHANCEMENT - ALL-TIME HIGH (ATH) DETECTION:
+        ====================================================
+        When a coin reaches its all-time high, use aggressive exit strategy:
+
+        Implementation Requirements:
+        1. Fetch ATH from Coinbase REST API on position entry:
+           GET /api/v3/brokerage/market/products/{product_id}/candles
+           - Use 1-day candles, max=1000 (approx 3 years of data)
+           - Extract highest high from all candles
+           - Store as position.all_time_high field
+
+        2. Monitor for ATH breakthrough during position tracking:
+           if current_price >= position.all_time_high * 0.99:  # Within 1% of ATH
+               # Switch to aggressive exit mode
+               position.ath_mode_active = True
+               position.ath_tight_stop = current_price * 0.99  # 1% trailing stop
+
+        3. Aggressive exit logic when at/near ATH:
+           if position.ath_mode_active:
+               if current_price < position.ath_tight_stop:
+                   return True, f"ATH tight stop hit (secured gains at near-ATH levels)"
+               # Update tight stop as price climbs
+               position.ath_tight_stop = max(position.ath_tight_stop, current_price * 0.99)
+
+        4. Configuration (add to environment variables):
+           - ATH_DETECTION_ENABLED: bool (default True)
+           - ATH_TIGHT_STOP_PERCENT: float (default 1.0%)
+           - ATH_PROXIMITY_PERCENT: float (default 1.0% - trigger when within 1% of ATH)
+
+        5. Database schema additions for persistence:
+           - all_time_high REAL
+           - ath_mode_active INTEGER (boolean)
+           - ath_tight_stop REAL
+           - ath_first_detected_at TEXT (timestamp)
+
+        Rationale:
+        - ATH levels often face strong resistance and rejection
+        - Quick 1% trailing stop captures maximum profit before potential reversal
+        - Historical data shows many coins retrace 10-30% after hitting new ATH
+        - Better to secure 99% of ATH gains than risk larger drawdown
+
+        Example:
+        - Coin ATH: $100
+        - Current price: $99.50 (within 1% of ATH)
+        - Trigger ATH mode, set tight stop at $98.50 (1% trailing)
+        - If price hits $101 (new ATH), update stop to $99.99
+        - Exit immediately if price drops below trailing stop
+
+        API Reference:
+        https://docs.cdp.coinbase.com/advanced-trade/reference/retailbrokerageapi_getcandles
+        """
         # Calculate time held
         entry_time = datetime.fromisoformat(self.entry_time)
         time_held_minutes = (datetime.now() - entry_time).total_seconds() / 60
@@ -107,6 +168,11 @@ class Position:
         # Calculate current P&L percentage
         current_value = current_price * self.quantity
         pnl_percent = ((current_value - self.cost_basis) / self.cost_basis) * 100
+
+        # TODO: Add ATH detection logic here (see documentation above)
+        # if hasattr(self, 'ath_mode_active') and self.ath_mode_active:
+        #     if current_price < self.ath_tight_stop:
+        #         return True, f"ATH tight stop hit at ${current_price:.6f}"
 
         # STOP LOSS: Exit immediately if down 5% or more
         if pnl_percent <= -STOP_LOSS_PERCENT:
@@ -240,6 +306,10 @@ class PaperTradingBot:
                 -- last_known_price REAL              # Price before disconnect
                 -- last_update_source TEXT            # Source of last update
                 -- needs_reconciliation INTEGER DEFAULT 0  # Boolean flag
+                -- all_time_high REAL                 # Historical ATH from API
+                -- ath_mode_active INTEGER DEFAULT 0  # ATH proximity mode active
+                -- ath_tight_stop REAL                # Tight trailing stop when near ATH
+                -- ath_first_detected_at TEXT         # When ATH proximity triggered
             )
         """)
 
