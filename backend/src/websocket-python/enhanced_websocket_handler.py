@@ -52,6 +52,12 @@ class EnhancedWebSocketHandler:
         # Initialize flag
         self.initialized = False
 
+        # 24-hour baseline tracking
+        self.baseline_prices: Dict[str, float] = {}  # Store baseline prices from midnight
+        self.last_baseline_update = None
+        self.baseline_thread = None
+        self.running = False
+
     def on(self, event: str, callback: Callable):
         """Add event listener (same interface as EventEmitter)"""
         if event not in self.event_callbacks:
@@ -146,6 +152,15 @@ class EnhancedWebSocketHandler:
             # Start connections
             self.ws_manager.start()
 
+            # Start baseline update thread (runs at midnight daily)
+            self.running = True
+            self.baseline_thread = threading.Thread(target=self._baseline_update_loop, daemon=True)
+            self.baseline_thread.start()
+            logger.info('Started 24hr baseline price update thread (runs at midnight)')
+
+            # Fetch initial baseline prices after a short delay (to let tickers populate)
+            threading.Timer(5.0, self._fetch_baseline_prices).start()
+
         except Exception as e:
             logger.error(f'Enhanced WebSocket handler initialization failed: {e}')
             raise
@@ -153,6 +168,11 @@ class EnhancedWebSocketHandler:
     def _handle_ticker_update(self, ticker_data: TickerData):
         """Handle ticker updates from multi-connection manager"""
         try:
+            # Calculate 24hr change from baseline (midnight price)
+            baseline_price = self.baseline_prices.get(ticker_data.product_id, ticker_data.price)
+            price_change_24h = ticker_data.price - baseline_price
+            price_change_percent_24h = ((ticker_data.price - baseline_price) / baseline_price * 100) if baseline_price > 0 else 0
+
             # Convert to original format
             ticker_dict = {
                 'crypto': ticker_data.product_id,
@@ -160,14 +180,15 @@ class EnhancedWebSocketHandler:
                 'bid': ticker_data.best_bid or 0,
                 'ask': ticker_data.best_ask or 0,
                 'volume_24h': ticker_data.volume_24h or 0,
-                'price_24h': 0,  # Not available in real-time ticker
+                'price_24h': baseline_price,  # Baseline from midnight
                 'low_24h': 0,    # Not available in real-time ticker
                 'high_24h': 0,   # Not available in real-time ticker
-                'price_change_24h': 0,
-                'price_change_percent_24h': 0,
+                'price_change_24h': price_change_24h,
+                'price_change_percent_24h': price_change_percent_24h,
                 'time': ticker_data.time,
                 'sequence': ticker_data.sequence,
-                'last_size': ticker_data.last_size
+                'last_size': ticker_data.last_size,
+                'timestamp': datetime.now().strftime('%H:%M:%S')
             }
 
             # Store in current tickers
@@ -251,8 +272,53 @@ class EnhancedWebSocketHandler:
 
     def disconnect(self):
         """Disconnect all WebSocket connections"""
+        self.running = False
         if self.ws_manager:
             self.ws_manager.stop()
+
+    def _fetch_baseline_prices(self):
+        """Fetch current prices from all tracked pairs to use as baseline"""
+        try:
+            # Use current websocket prices as baseline (they're real-time and accurate)
+            baseline_count = 0
+            for product_id, ticker in self.currentTickers.items():
+                if 'price' in ticker and ticker['price'] > 0:
+                    self.baseline_prices[product_id] = ticker['price']
+                    baseline_count += 1
+
+            self.last_baseline_update = datetime.now()
+            logger.info(f"✅ Baseline prices updated: {baseline_count} products at {self.last_baseline_update.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        except Exception as e:
+            logger.error(f"Error fetching baseline prices: {e}")
+
+    def _baseline_update_loop(self):
+        """Background thread that updates baseline at midnight every day"""
+        while self.running:
+            try:
+                now = datetime.now()
+
+                # Calculate next midnight
+                tomorrow = now + timedelta(days=1)
+                next_midnight = datetime(tomorrow.year, tomorrow.month, tomorrow.day, 0, 0, 0)
+
+                # Calculate seconds until midnight
+                seconds_until_midnight = (next_midnight - now).total_seconds()
+
+                logger.info(f"Next baseline update scheduled for: {next_midnight.strftime('%Y-%m-%d %H:%M:%S')} ({seconds_until_midnight/3600:.1f} hours)")
+
+                # Sleep until midnight
+                time.sleep(seconds_until_midnight)
+
+                # Update baseline prices at midnight
+                if self.running:
+                    logger.info("🕛 Midnight reached - updating 24hr baseline prices")
+                    self._fetch_baseline_prices()
+
+            except Exception as e:
+                logger.error(f"Error in baseline update loop: {e}")
+                # Sleep for an hour and try again if there's an error
+                time.sleep(3600)
 
     # Priority pair management methods (same interface as original)
     def addPriorityPair(self, product_id: str):

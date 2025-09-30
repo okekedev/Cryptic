@@ -41,7 +41,42 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Position:
-    """Represents an open paper trading position"""
+    """
+    Represents an open paper trading position
+
+    LIVE TRADING EXTENSION:
+    =======================
+    For real trading with Coinbase Advanced Trade API, extend this dataclass with:
+
+    Additional Required Fields:
+    - order_id: str                    # Exchange order ID from market buy
+    - fill_id: str                     # Fill ID for tracking execution
+    - actual_entry_price: float        # Actual fill price (may differ from spike price)
+    - actual_quantity: float           # Actual filled quantity (may be partial)
+    - order_status: str                # "open", "filled", "partially_filled", "cancelled"
+    - last_sync_timestamp: str         # ISO timestamp of last exchange sync
+    - exchange_fees: dict              # Actual fees charged by exchange
+    - exit_order_id: str               # Order ID of exit/sell order (if placed)
+    - partial_fills: list              # Array of partial fill records
+    - reconciled: bool                 # Whether position matches exchange state
+
+    Critical for Reconnection:
+    - last_known_price: float          # Price before disconnect (detect gaps)
+    - last_update_source: str          # "websocket", "rest_api", "restored_from_db"
+    - needs_reconciliation: bool       # Flag for post-reconnect verification
+    - stale_threshold_seconds: int     # Max age before requiring fresh exchange data
+
+    Usage Pattern:
+    1. On entry: Store order_id immediately after market buy
+    2. On fill confirmation: Update actual_entry_price and actual_quantity
+    3. Every update: Set last_sync_timestamp and last_known_price
+    4. On disconnect: Set needs_reconciliation = True
+    5. On reconnect: Fetch order status from REST API, reconcile differences
+    6. On exit: Store exit_order_id and monitor fill status
+
+    See Coinbase Advanced Trade API docs for order lifecycle:
+    https://docs.cdp.coinbase.com/advanced-trade/docs/rest-api-orders
+    """
     symbol: str
     entry_price: float
     entry_time: str
@@ -178,8 +213,113 @@ class PaperTradingBot:
             )
         """)
 
+        # Open positions table (for persistence across restarts)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS open_positions (
+                symbol TEXT PRIMARY KEY,
+                entry_price REAL NOT NULL,
+                entry_time TEXT NOT NULL,
+                quantity REAL NOT NULL,
+                cost_basis REAL NOT NULL,
+                min_exit_price REAL NOT NULL,
+                peak_price REAL NOT NULL,
+                trailing_exit_price REAL NOT NULL,
+                status TEXT NOT NULL,
+                spike_pct_change REAL
+                -- LIVE TRADING: Add these columns when implementing real trading:
+                -- order_id TEXT                      # Exchange order ID
+                -- fill_id TEXT                       # Fill ID from exchange
+                -- actual_entry_price REAL            # Actual fill price
+                -- actual_quantity REAL               # Actual filled quantity
+                -- order_status TEXT                  # Order status from exchange
+                -- last_sync_timestamp TEXT           # Last exchange sync time
+                -- exchange_fees_json TEXT            # JSON of actual fees charged
+                -- exit_order_id TEXT                 # Exit order ID
+                -- partial_fills_json TEXT            # JSON array of partial fills
+                -- reconciled INTEGER DEFAULT 0       # Boolean flag
+                -- last_known_price REAL              # Price before disconnect
+                -- last_update_source TEXT            # Source of last update
+                -- needs_reconciliation INTEGER DEFAULT 0  # Boolean flag
+            )
+        """)
+
         self.db.commit()
         logger.info(f"Database initialized: {DB_PATH}")
+
+        # Restore open positions from database
+        self._restore_positions()
+
+    def _restore_positions(self):
+        """Restore open positions from database after restart"""
+        cursor = self.db.cursor()
+        cursor.execute("SELECT * FROM open_positions WHERE status = 'open'")
+        rows = cursor.fetchall()
+
+        if rows:
+            logger.info("=" * 60)
+            logger.info(f"🔄 Restoring {len(rows)} open position(s) from database")
+            logger.info("=" * 60)
+
+        for row in rows:
+            symbol, entry_price, entry_time, quantity, cost_basis, min_exit_price, peak_price, trailing_exit_price, status, spike_pct = row
+
+            position = Position(
+                symbol=symbol,
+                entry_price=entry_price,
+                entry_time=entry_time,
+                quantity=quantity,
+                cost_basis=cost_basis,
+                min_exit_price=min_exit_price,
+                peak_price=peak_price,
+                trailing_exit_price=trailing_exit_price,
+                status=status
+            )
+
+            self.positions[symbol] = position
+            self.capital -= cost_basis
+
+            # Calculate time held
+            entry_dt = datetime.fromisoformat(entry_time)
+            time_held = (datetime.now() - entry_dt).total_seconds() / 60
+
+            logger.info(f"✅ Restored: {symbol}")
+            logger.info(f"   Entry: ${entry_price:.6f} at {entry_dt.strftime('%H:%M:%S')}")
+            logger.info(f"   Peak: ${peak_price:.6f}, Trailing Exit: ${trailing_exit_price:.6f}")
+            logger.info(f"   Time Held: {time_held:.1f} minutes")
+            logger.info(f"   Cost Basis: ${cost_basis:.2f}")
+
+        if rows:
+            logger.info("=" * 60)
+            logger.info(f"Current Capital: ${self.capital:.2f}")
+            logger.info("=" * 60)
+
+    def _persist_position(self, position: Position, spike_pct: float = 0.0):
+        """Save position to database"""
+        cursor = self.db.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO open_positions
+            (symbol, entry_price, entry_time, quantity, cost_basis, min_exit_price,
+             peak_price, trailing_exit_price, status, spike_pct_change)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            position.symbol,
+            position.entry_price,
+            position.entry_time,
+            position.quantity,
+            position.cost_basis,
+            position.min_exit_price,
+            position.peak_price,
+            position.trailing_exit_price,
+            position.status,
+            spike_pct
+        ))
+        self.db.commit()
+
+    def _remove_persisted_position(self, symbol: str):
+        """Remove position from database when closed"""
+        cursor = self.db.cursor()
+        cursor.execute("DELETE FROM open_positions WHERE symbol = ?", (symbol,))
+        self.db.commit()
 
     def open_position(self, symbol: str, entry_price: float, spike_pct: float):
         """Open a new paper trading position"""
@@ -238,6 +378,9 @@ class PaperTradingBot:
         logger.info(f"   Spike %: {spike_pct:.2f}%")
         logger.info("=" * 60)
 
+        # Persist to database
+        self._persist_position(position, spike_pct)
+
         # Record in database
         self._record_trade_entry(position, spike_pct)
 
@@ -256,6 +399,8 @@ class PaperTradingBot:
             logger.info(f"🔼 {symbol}: New peak ${current_price:.6f}, "
                        f"Unrealized P&L: {unrealized['pnl_percent']:+.2f}%, "
                        f"Trailing exit now at ${position.trailing_exit_price:.6f}")
+            # Update persisted position with new peak
+            self._persist_position(position)
 
         # Check if we should exit
         should_exit, exit_reason = position.should_exit(current_price)
@@ -291,6 +436,9 @@ class PaperTradingBot:
 
         # Record in database
         self._record_trade_exit(position, exit_price, pnl_data, reason)
+
+        # Remove from persisted positions
+        self._remove_persisted_position(symbol)
 
         # Remove position
         del self.positions[symbol]
@@ -384,7 +532,61 @@ class PaperTradingBot:
         }
 
     def connect_websocket(self):
-        """Connect to backend Socket.IO for spike alerts and price updates"""
+        """
+        Connect to backend Socket.IO for spike alerts and price updates
+
+        RECONNECTION STRATEGY FOR LIVE TRADING:
+        ========================================
+        This paper trading bot uses SQLite persistence to survive restarts.
+        For LIVE TRADING with real API connections, implement these critical features:
+
+        1. AUTOMATIC RECONNECTION (Coinbase Advanced Trade WebSocket):
+           - Use exponential backoff: 1s, 2s, 4s, 8s, up to 60s max
+           - Implement heartbeat/ping-pong to detect stale connections
+           - Set connection timeout and auto-reconnect on timeout
+           - Reference: https://docs.cdp.coinbase.com/advanced-trade/docs/ws-overview
+
+        2. POSITION STATE RECOVERY ON RECONNECT:
+           - On reconnect, immediately call REST API to fetch:
+             a) Current account balances (verify available capital)
+             b) All open orders (check if any fills occurred during disconnect)
+             c) Recent fills (catch any trades that executed while offline)
+           - Cross-reference REST data with SQLite persisted positions
+           - Reconcile any discrepancies (fills, partial fills, cancellations)
+
+        3. SQLITE PERSISTENCE REQUIREMENTS FOR LIVE TRADING:
+           Current implementation stores:
+           ✅ Position entry details (price, quantity, cost basis)
+           ✅ Peak tracking (peak_price, trailing_exit_price)
+           ✅ Entry time and status
+
+           Additional fields needed for live trading:
+           - order_id: Exchange order ID for tracking fills
+           - last_sync_time: Timestamp of last successful data sync
+           - partial_fills: Array of partial fill records
+           - exchange_status: Current order status from exchange
+           - last_known_price: Price at last update (for gap detection)
+
+        4. DISCONNECT DETECTION:
+           - Monitor WebSocket connection health with periodic pings
+           - Set reasonable timeout (30-60 seconds) for ping/pong
+           - Log disconnect reason (network, exchange maintenance, etc.)
+           - Immediately trigger reconnection + state recovery flow
+
+        5. RACE CONDITION PREVENTION:
+           - Use optimistic locking for position updates
+           - Timestamp all database writes
+           - On reconnect, fetch exchange state BEFORE resuming trading
+           - Implement "recovery mode" that pauses new trades until state verified
+
+        6. CIRCUIT BREAKER:
+           - If reconnection fails repeatedly (e.g., 5 times), pause trading
+           - Send critical alert (Telegram, email, SMS)
+           - Require manual intervention to resume
+
+        Implementation: For production, wrap REST API calls in try-catch with retries,
+        implement a StateReconciliation class, and add comprehensive logging for auditing.
+        """
         self.sio = socketio.Client(logger=False, engineio_logger=False)
 
         @self.sio.event
@@ -394,6 +596,8 @@ class PaperTradingBot:
         @self.sio.event
         def disconnect():
             logger.warning("❌ Disconnected from backend")
+            # TODO: For live trading, implement immediate reconnection logic here
+            # See RECONNECTION STRATEGY comment above for full implementation details
 
         @self.sio.on('spike_alert')
         def on_spike_alert(data):
