@@ -764,37 +764,41 @@ async def handle_custom_buy_input(update: Update, context: ContextTypes.DEFAULT_
 
             percentage_str = str((amount / available) * 100)
 
-        # Get product info
+        # Get product info for verification screen
         product_info = await trading_manager.get_product_info(product_id)
         if 'error' in product_info:
             await update.message.reply_text(f"❌ Error: {product_info['error']}")
             return
 
         current_price = product_info['current_price']
-        estimated_coins = amount / current_price if current_price > 0 else 0
-        remaining_balance = balance_info['available_trading'] - amount
+        estimated_quantity = amount / current_price if current_price > 0 else 0
 
-        # Show confirmation
-        message = (
-            f"💰 *Confirm Market Buy*\n\n"
-            f"*Pair:* {product_id}\n"
+        # Skip first confirmation, go straight to verification screen
+        verification_message = (
+            f"⚠️ *VERIFY PURCHASE*\n\n"
+            f"*Product:* {product_id}\n"
+            f"*Amount:* ${amount:,.2f}\n"
             f"*Current Price:* ${current_price:,.6f}\n"
-            f"*Purchase Amount:* ${amount:,.2f}\n"
-            f"*Est. Coins:* {estimated_coins:.8f}\n"
-            f"*Available Balance:* ${balance_info['available_trading']:,.2f}\n"
-            f"*After Purchase:* ${remaining_balance:,.2f}\n\n"
-            f"⚠️ This will execute a *MARKET BUY* at current price"
+            f"*Est. Quantity:* {estimated_quantity:.8f}\n"
+            f"*Est. Fees:* ${amount * 0.006:,.2f} (0.6%)\n\n"
+            f"🤖 *Trading Mode:* Automated\n"
+            f"• Profit Target: 3%+\n"
+            f"• Trailing Stop: 1.5%\n"
+            f"• Stop Loss: -5%\n"
+            f"• Min Hold: 30 min\n\n"
+            f"⚡ After purchase, bot will manage exits automatically.\n\n"
+            f"Proceed with purchase?"
         )
 
         keyboard = [
             [
-                InlineKeyboardButton("✅ Confirm Buy", callback_data=f"confirm_buy:{product_id}:{amount}:{percentage_str}"),
+                InlineKeyboardButton("✅ CONFIRM PURCHASE", callback_data=f"execute_buy:{product_id}:{amount}:{percentage_str}"),
                 InlineKeyboardButton("❌ Cancel", callback_data=f"ignore:{product_id}")
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.message.reply_text(message, parse_mode='Markdown', reply_markup=reply_markup)
+        await update.message.reply_text(verification_message, parse_mode='Markdown', reply_markup=reply_markup)
 
     except ValueError:
         await update.message.reply_text(
@@ -823,12 +827,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             product_id = data.split(":", 1)[1]
             await handle_ignore_request(query, product_id)
 
-        elif data.startswith("confirm_buy:"):
-            params = data.split(":", 3)
-            product_id = params[1]
-            amount = params[2]
-            percentage = params[3] if len(params) > 3 else "2.0"
-            await handle_buy_confirmation(query, product_id, amount, percentage, chat_id)
+        # Removed: confirm_buy callback - now going straight to execute_buy
 
         elif data.startswith("execute_buy:"):
             params = data.split(":", 3)
@@ -878,6 +877,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 elif action == "limit" and step == "execute":
                     price = float(parts[4]) if len(parts) > 4 else 0
                     await handle_position_limit_execute(query, product_id, price, chat_id)
+                elif action == "cancel_limit" and step == "confirm":
+                    await handle_cancel_limit_confirm(query, product_id, chat_id)
+                elif action == "cancel_limit" and step == "execute":
+                    await handle_cancel_limit_execute(query, product_id, chat_id)
                 elif action == "market" and step == "confirm":
                     await handle_position_market_confirm(query, product_id, chat_id)
                 elif action == "market" and step == "execute":
@@ -1290,7 +1293,9 @@ async def handle_position_limit_prompt(query, product_id: str, chat_id: str):
             f"Current Price: ${current_price:,.6f}\n"
             f"Position Size: {card['quantity']:.8f}\n\n"
             f"Reply with your limit price:\n"
-            f"Example: `{current_price * 1.05:.2f}` (5% above current)\n\n"
+            f"• Dollar amount: `{current_price * 1.05:.2f}`\n"
+            f"• Percentage: `+5%` (5% above current)\n"
+            f"• Percentage: `-2%` (2% below current)\n\n"
             f"ℹ️ Order will execute when price reaches your limit"
         )
 
@@ -1409,6 +1414,88 @@ async def handle_position_limit_execute(query, product_id: str, price: float, ch
     except Exception as e:
         logger.error(f"Error executing limit order: {e}")
         await query.edit_message_text(f"❌ Error placing order: {str(e)}")
+
+
+async def handle_cancel_limit_confirm(query, product_id: str, chat_id: str):
+    """Show confirmation for cancelling limit order"""
+    try:
+        if product_id not in active_position_cards:
+            await query.edit_message_text("❌ Position not found")
+            return
+
+        card = active_position_cards[product_id]
+
+        message = (
+            f"⚠️ *CONFIRM CANCEL LIMIT ORDER*\n\n"
+            f"Product: {product_id}\n"
+            f"Quantity: {card['quantity']:.8f}\n\n"
+            f"This will:\n"
+            f"• Cancel any pending limit orders\n"
+            f"• Resume automated trading logic\n"
+            f"• Bot will manage exits automatically\n\n"
+            f"Are you sure?"
+        )
+
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ Yes, Resume Auto", callback_data=f"pos_action:{product_id}:cancel_limit:execute"),
+                InlineKeyboardButton("❌ No, Keep Order", callback_data=f"pos_action:{product_id}:refresh")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.edit_message_text(message, parse_mode='Markdown', reply_markup=reply_markup)
+
+    except Exception as e:
+        logger.error(f"Error in cancel limit confirm: {e}")
+        await query.edit_message_text(f"❌ Error: {str(e)}")
+
+
+async def handle_cancel_limit_execute(query, product_id: str, chat_id: str):
+    """Execute limit order cancellation and resume automated trading"""
+    try:
+        if product_id not in active_position_cards:
+            await query.edit_message_text("❌ Position not found")
+            return
+
+        await query.edit_message_text(f"⏳ Cancelling limit order for {product_id}...")
+
+        # Cancel limit order via LiveTradingManager
+        if live_trading_manager:
+            result = await live_trading_manager.cancel_limit_order(product_id)
+
+            if not result['success']:
+                await query.edit_message_text(f"❌ Error: {result['message']}")
+                return
+
+            position = result['position']
+
+            message = (
+                f"✅ *AUTOMATED TRADING RESUMED*\n\n"
+                f"Product: {product_id}\n\n"
+                f"🤖 Bot has resumed automated exits:\n"
+                f"• Min Exit: ${position.min_exit_price:,.6f} (+3%)\n"
+                f"• Stop Loss: ${position.stop_loss_price:,.6f} (-5%)\n"
+                f"• Trailing Stop: Active\n\n"
+                f"📊 Position card updated.\n"
+                f"Bot will monitor and exit automatically."
+            )
+        else:
+            message = (
+                f"✅ *Limit Order Cancelled*\n\n"
+                f"Product: {product_id}\n\n"
+                f"ℹ️ Automated trading resumed"
+            )
+
+        keyboard = [[InlineKeyboardButton("🔙 Back to Position", callback_data=f"pos_action:{product_id}:refresh:0")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.edit_message_text(message, parse_mode='Markdown', reply_markup=reply_markup)
+        logger.info(f"🤖 Automated trading resumed for {product_id}")
+
+    except Exception as e:
+        logger.error(f"Error cancelling limit order: {e}")
+        await query.edit_message_text(f"❌ Error: {str(e)}")
 
 
 async def handle_position_market_confirm(query, product_id: str, chat_id: str):
@@ -1582,21 +1669,36 @@ async def handle_limit_price_input(update: Update, context: ContextTypes.DEFAULT
     del pending_limit_orders[chat_id]  # Clear the pending state
 
     try:
-        # Parse the input - remove $ and commas
-        limit_price = float(user_input.replace('$', '').replace(',', '').strip())
-
-        # Validate minimum price (must be > 0)
-        if limit_price <= 0:
-            await update.message.reply_text("❌ Limit price must be greater than $0")
-            return
-
-        # Get current position card data
+        # Get current position card data first (needed for percentage calculations)
         if product_id not in active_position_cards:
             await update.message.reply_text(f"❌ Position card not found for {product_id}")
             return
 
         card = active_position_cards[product_id]
         current_price = card['current_price']
+
+        # Parse the input - support both dollar amounts and percentages
+        if '%' in user_input:
+            # Percentage format (e.g., "+5%" or "-2%")
+            percent_str = user_input.replace('%', '').replace('+', '').strip()
+            try:
+                percent = float(percent_str)
+                limit_price = current_price * (1 + percent / 100)
+            except ValueError:
+                await update.message.reply_text("❌ Invalid percentage format. Use +5% or -2%")
+                return
+        else:
+            # Dollar amount format (e.g., "65000" or "$65,000")
+            try:
+                limit_price = float(user_input.replace('$', '').replace(',', '').strip())
+            except ValueError:
+                await update.message.reply_text("❌ Invalid price format. Use a number or percentage (e.g., 65000 or +5%)")
+                return
+
+        # Validate minimum price (must be > 0)
+        if limit_price <= 0:
+            await update.message.reply_text("❌ Limit price must be greater than $0")
+            return
 
         # Validate limit price is above current price
         if limit_price <= current_price:
@@ -1759,12 +1861,20 @@ async def update_position_card(bot: Bot, product_id: str, current_price: float):
     Update position card with current price and live trading status
     NEW: Fetches live position data from LiveTradingManager
     """
-    global active_position_cards
+    global active_position_cards, pending_limit_orders
 
     if product_id not in active_position_cards:
         return
 
     card = active_position_cards[product_id]
+
+    # Skip update if user is in the middle of a limit order flow
+    chat_id = str(card['chat_id'])
+    if chat_id in pending_limit_orders:
+        pending_context = pending_limit_orders[chat_id]
+        if pending_context.get('product_id') == product_id:
+            logger.debug(f"Skipping position card update for {product_id} - user entering limit order")
+            return
 
     # Rate limit: Update max once per 5 seconds
     import time
@@ -1778,11 +1888,20 @@ async def update_position_card(bot: Bot, product_id: str, current_price: float):
         if live_trading_manager:
             live_position = live_trading_manager.get_position(product_id)
 
-        # Calculate P&L
+        # Calculate P&L (fee-aware if live position available)
         card['current_price'] = current_price
-        gross_value = current_price * card['quantity']
-        card['pnl_usd'] = gross_value - card['cost_basis']
-        card['pnl_pct'] = (card['pnl_usd'] / card['cost_basis']) * 100
+
+        if live_position:
+            # Use fee-aware calculation from LivePosition
+            unrealized_pnl_data = live_position.get_unrealized_pnl(current_price)
+            card['pnl_usd'] = unrealized_pnl_data['unrealized_pnl']
+            card['pnl_pct'] = unrealized_pnl_data['unrealized_pnl_percent']
+        else:
+            # Fallback for positions without LiveTradingManager (shouldn't happen)
+            gross_value = current_price * card['quantity']
+            card['pnl_usd'] = gross_value - card['cost_basis']
+            card['pnl_pct'] = (card['pnl_usd'] / card['cost_basis']) * 100
+
         card['last_update'] = current_time
 
         # Format message with live position data

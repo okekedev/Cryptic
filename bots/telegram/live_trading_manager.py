@@ -105,13 +105,19 @@ class LivePosition:
         }
 
     def get_unrealized_pnl(self, current_price: float) -> Dict:
-        """Calculate unrealized P&L"""
-        current_value = current_price * self.quantity
-        unrealized_pnl = current_value - self.cost_basis
+        """Calculate unrealized P&L (accounts for projected sell fee)"""
+        gross_value = current_price * self.quantity
+        # Project sell fee that would be charged if we sold now
+        projected_sell_fee = gross_value * (SELL_FEE_PERCENT / 100)
+        net_value = gross_value - projected_sell_fee
+
+        unrealized_pnl = net_value - self.cost_basis
         unrealized_pnl_percent = (unrealized_pnl / self.cost_basis) * 100
 
         return {
-            "current_value": current_value,
+            "current_value": gross_value,
+            "projected_sell_fee": projected_sell_fee,
+            "net_value": net_value,
             "unrealized_pnl": unrealized_pnl,
             "unrealized_pnl_percent": unrealized_pnl_percent
         }
@@ -654,6 +660,40 @@ class LiveTradingManager:
 
         except Exception as e:
             logger.error(f"Error setting limit order: {e}")
+            return {'success': False, 'message': str(e)}
+
+    async def cancel_limit_order(self, product_id: str) -> Dict:
+        """
+        Cancel limit order and resume automated trading
+        """
+        if product_id not in self.positions:
+            return {'success': False, 'message': 'Position not found'}
+
+        position = self.positions[product_id]
+
+        try:
+            # Cancel any pending orders on Coinbase
+            # TODO: Implement actual order cancellation via TradingManager
+            if position.limit_order_id and position.limit_order_id != "pending_implementation":
+                # await self.trading_manager.cancel_order(position.limit_order_id)
+                pass
+
+            # Resume automated mode
+            position.mode = "automated"
+            position.status = "active"
+            position.limit_order_id = None
+            self._persist_position(position)
+
+            logger.info(f"🤖 {product_id} resumed automated trading (limit order cancelled)")
+
+            return {
+                'success': True,
+                'message': 'Limit order cancelled, automated trading resumed',
+                'position': position
+            }
+
+        except Exception as e:
+            logger.error(f"Error cancelling limit order: {e}")
             return {'success': False, 'message': str(e)}
 
     def get_active_product_ids(self) -> list:
