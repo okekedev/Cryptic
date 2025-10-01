@@ -418,12 +418,20 @@ class TradingManager:
 
             # Extract order_id - VERBOSE DEBUGGING
             print(f"\nEXTRACTING ORDER_ID:")
+            print(f"response type: {type(response)}")
+            print(f"response keys: {list(response.keys()) if isinstance(response, dict) else 'NOT A DICT'}")
             print(f"response.get('success') = {response.get('success')}")
             print(f"'success_response' in response = {'success_response' in response}")
 
+            if 'success_response' in response:
+                print(f"success_response content: {response['success_response']}")
+                print(f"success_response type: {type(response['success_response'])}")
+
             order_id = None
             if response.get('success') and 'success_response' in response:
-                order_id = response['success_response'].get('order_id')
+                success_resp = response['success_response']
+                print(f"success_response keys: {list(success_resp.keys()) if isinstance(success_resp, dict) else 'NOT A DICT'}")
+                order_id = success_resp.get('order_id')
                 print(f"Extracted from success_response: {order_id}")
 
             if not order_id:

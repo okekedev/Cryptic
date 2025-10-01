@@ -631,10 +631,13 @@ class DumpTradingBot:
         # Connection loop
         while self.running:
             try:
-                self.sio.connect(BACKEND_URL)
+                if not self.sio.connected:
+                    self.sio.connect(BACKEND_URL)
                 self.sio.wait()
             except Exception as e:
                 logger.error(f"Connection failed: {e}")
+                if self.sio.connected:
+                    self.sio.disconnect()
                 time.sleep(5)
 
     def print_summary(self):

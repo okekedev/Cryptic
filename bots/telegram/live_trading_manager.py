@@ -256,6 +256,9 @@ class LiveTradingManager:
             'order_result': dict
         }
         """
+        # Round quote_size to 2 decimal places for Coinbase precision requirements
+        quote_size = round(quote_size, 2)
+
         print(f"\n{'='*60}")
         print(f"🔵 EXECUTE_BUY CALLED")
         print(f"🔵 product_id: {product_id}")

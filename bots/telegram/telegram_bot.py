@@ -723,7 +723,11 @@ async def handle_custom_buy_input(update: Update, context: ContextTypes.DEFAULT_
             # Use the existing percentage handler logic
             balance_info = await trading_manager.get_account_balance('USD')
             if 'error' in balance_info:
-                await update.message.reply_text(f"❌ Error: {balance_info['error']}")
+                await update.message.reply_text(
+                    f"❌ Error: {balance_info['error']}\n\n"
+                    f"Please try again:"
+                )
+                pending_custom_buys[chat_id] = product_id  # Keep pending state for retry
                 return
 
             position_calc = trading_manager.calculate_position_size(
@@ -732,7 +736,11 @@ async def handle_custom_buy_input(update: Update, context: ContextTypes.DEFAULT_
             )
 
             if not position_calc['valid']:
-                await update.message.reply_text(f"❌ {position_calc['error']}")
+                await update.message.reply_text(
+                    f"❌ {position_calc['error']}\n\n"
+                    f"Please enter a valid percentage:"
+                )
+                pending_custom_buys[chat_id] = product_id  # Keep pending state for retry
                 return
 
             amount = position_calc['position_size']
@@ -745,21 +753,29 @@ async def handle_custom_buy_input(update: Update, context: ContextTypes.DEFAULT_
             # Validate minimum
             if amount < trading_manager.min_order_usd:
                 await update.message.reply_text(
-                    f"❌ Amount ${amount:.2f} is below minimum ${trading_manager.min_order_usd}"
+                    f"❌ Amount ${amount:.2f} is below minimum ${trading_manager.min_order_usd}\n\n"
+                    f"Please enter a new amount:"
                 )
+                pending_custom_buys[chat_id] = product_id  # Keep pending state for retry
                 return
 
             balance_info = await trading_manager.get_account_balance('USD')
             if 'error' in balance_info:
-                await update.message.reply_text(f"❌ Error: {balance_info['error']}")
+                await update.message.reply_text(
+                    f"❌ Error: {balance_info['error']}\n\n"
+                    f"Please try again or enter a different amount:"
+                )
+                pending_custom_buys[chat_id] = product_id  # Keep pending state for retry
                 return
 
             # Calculate what percentage this represents
             available = balance_info['available_trading']
             if amount > available:
                 await update.message.reply_text(
-                    f"❌ Amount ${amount:.2f} exceeds available balance ${available:.2f}"
+                    f"❌ Amount ${amount:.2f} exceeds available balance ${available:.2f}\n\n"
+                    f"Please enter a smaller amount:"
                 )
+                pending_custom_buys[chat_id] = product_id  # Keep pending state for retry
                 return
 
             percentage_str = str((amount / available) * 100)
@@ -767,7 +783,11 @@ async def handle_custom_buy_input(update: Update, context: ContextTypes.DEFAULT_
         # Get product info for verification screen
         product_info = await trading_manager.get_product_info(product_id)
         if 'error' in product_info:
-            await update.message.reply_text(f"❌ Error: {product_info['error']}")
+            await update.message.reply_text(
+                f"❌ Error: {product_info['error']}\n\n"
+                f"Please try again:"
+            )
+            pending_custom_buys[chat_id] = product_id  # Keep pending state for retry
             return
 
         current_price = product_info['current_price']
@@ -802,12 +822,17 @@ async def handle_custom_buy_input(update: Update, context: ContextTypes.DEFAULT_
 
     except ValueError:
         await update.message.reply_text(
-            f"❌ Invalid amount format. Please enter a number like `50` or `7.5%`"
+            f"❌ Invalid amount format. Please enter a number like `50` or `7.5%`\n\n"
+            f"Please try again:"
         )
-        pending_custom_buys[chat_id] = product_id  # Restore pending state
+        pending_custom_buys[chat_id] = product_id  # Restore pending state for retry
     except Exception as e:
         logger.error(f"Error processing custom buy input: {e}")
-        await update.message.reply_text(f"❌ Error: {str(e)}")
+        await update.message.reply_text(
+            f"❌ Error: {str(e)}\n\n"
+            f"Please try again:"
+        )
+        pending_custom_buys[chat_id] = product_id  # Restore pending state for retry
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -904,7 +929,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_buy_request(query, product_id: str, chat_id: str):
-    """Handle buy button click - prompt for custom amount"""
+    """Handle buy button click - automatically use full balance"""
     try:
         # Get balance and product info
         balance_info = await trading_manager.get_account_balance('USD')
@@ -921,28 +946,53 @@ async def handle_buy_request(query, product_id: str, chat_id: str):
         current_price = product_info['current_price']
         available_balance = balance_info['available_trading']
 
-        # Store pending buy context
-        global pending_custom_buys
-        pending_custom_buys[chat_id] = product_id
+        # Calculate max purchase amount accounting for 0.6% buy fee
+        # Formula: available_balance = purchase_amount + (purchase_amount * 0.006)
+        # Solving: purchase_amount = available_balance / 1.006
+        # Round to 2 decimal places for Coinbase precision requirements
+        max_purchase_amount = round(available_balance / 1.006, 2)
 
-        message = (
-            f"💵 *Enter Purchase Amount*\n\n"
-            f"*Pair:* {product_id}\n"
+        # Validate minimum order size
+        if max_purchase_amount < trading_manager.min_order_usd:
+            await query.edit_message_text(
+                f"❌ Insufficient balance\n\n"
+                f"Available: ${available_balance:.2f}\n"
+                f"After fees: ${max_purchase_amount:.2f}\n"
+                f"Minimum required: ${trading_manager.min_order_usd}"
+            )
+            return
+
+        estimated_quantity = max_purchase_amount / current_price if current_price > 0 else 0
+        estimated_fee = max_purchase_amount * 0.006
+        percentage_str = "100.0"  # Using 100% of available balance
+
+        # Go straight to verification screen
+        verification_message = (
+            f"⚠️ *VERIFY PURCHASE*\n\n"
+            f"*Product:* {product_id}\n"
+            f"*Amount:* ${max_purchase_amount:,.2f}\n"
             f"*Current Price:* ${current_price:,.6f}\n"
-            f"*Available Balance:* ${available_balance:,.2f}\n\n"
-            f"Reply to this message with:\n"
-            f"• A dollar amount (e.g., `50` for $50)\n"
-            f"• A percentage (e.g., `7.5%` for 7.5%)\n\n"
-            f"Example: Type `100` to buy $100 worth\n"
-            f"Example: Type `12.5%` to buy 12.5% of balance"
+            f"*Est. Quantity:* {estimated_quantity:.8f}\n"
+            f"*Est. Fees:* ${estimated_fee:,.2f} (0.6%)\n"
+            f"*Total Cost:* ${available_balance:,.2f} (100% of balance)\n\n"
+            f"🤖 *Trading Mode:* Automated\n"
+            f"• Profit Target: 3%+\n"
+            f"• Trailing Stop: 1.5%\n"
+            f"• Stop Loss: -5%\n"
+            f"• Min Hold: 30 min\n\n"
+            f"⚡ After purchase, bot will manage exits automatically.\n\n"
+            f"Proceed with purchase?"
         )
 
         keyboard = [
-            [InlineKeyboardButton("❌ Cancel", callback_data=f"ignore:{product_id}")]
+            [
+                InlineKeyboardButton("✅ CONFIRM PURCHASE", callback_data=f"execute_buy:{product_id}:{max_purchase_amount}:{percentage_str}"),
+                InlineKeyboardButton("❌ Cancel", callback_data=f"ignore:{product_id}")
+            ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await query.edit_message_text(message, parse_mode='Markdown', reply_markup=reply_markup)
+        await query.edit_message_text(verification_message, parse_mode='Markdown', reply_markup=reply_markup)
 
     except Exception as e:
         logger.error(f"Error in buy request: {e}")
@@ -1007,10 +1057,20 @@ async def handle_execute_buy(query, product_id: str, amount: str, percentage: st
     try:
         await query.edit_message_text(f"⏳ Executing buy order for {product_id}...")
 
+        # Fetch current balance and recalculate to ensure accuracy
+        balance_info = await trading_manager.get_account_balance('USD')
+        if 'error' in balance_info:
+            await query.edit_message_text(f"❌ Error getting balance: {balance_info['error']}")
+            return
+
+        available_balance = balance_info['available_trading']
+        # Recalculate max purchase amount accounting for 0.6% buy fee
+        quote_size = round(available_balance / 1.006, 2)
+
         # Execute buy through LiveTradingManager (includes automated tracking)
         result = await live_trading_manager.execute_buy(
             product_id=product_id,
-            quote_size=float(amount),
+            quote_size=quote_size,
             position_percentage=float(percentage)
         )
 
