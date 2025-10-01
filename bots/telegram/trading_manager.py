@@ -385,10 +385,30 @@ class TradingManager:
 
             response = self._make_request('POST', '/api/v3/brokerage/orders', json_data=order_data)
 
+            # Debug logging
+            logger.info(f'🔍 Full Coinbase API Response: {response}')
+
             if 'error' in response:
                 return {'success': False, 'error': response['error'], 'message': f"Failed: {response['error']}"}
 
-            order_id = response.get('order_id', 'unknown')
+            # Extract order_id from success_response
+            order_id = None
+            if response.get('success') and 'success_response' in response:
+                order_id = response['success_response'].get('order_id')
+
+            # Fallback to top-level (shouldn't happen, but defensive coding)
+            if not order_id:
+                order_id = response.get('order_id', 'unknown')
+
+            # Validation
+            if order_id == 'unknown' or not order_id:
+                logger.error(f"❌ Failed to extract order_id from response: {response}")
+                return {
+                    'success': False,
+                    'error': 'Could not extract order_id from API response',
+                    'message': 'Order may have been created but order_id is missing',
+                    'raw_response': response
+                }
 
             # Track the order
             order_info = {
@@ -414,7 +434,7 @@ class TradingManager:
             self.save_trade_statistics()
             self.log_trade(order_info)
 
-            logger.info(f'Market buy order created: {order_id} for {quote_size} USD of {product_id}')
+            logger.info(f'✅ Market buy order created: {order_id} for {quote_size} USD of {product_id}')
 
             return {
                 'success': True,
@@ -456,10 +476,30 @@ class TradingManager:
 
             response = self._make_request('POST', '/api/v3/brokerage/orders', json_data=order_data)
 
+            # Debug logging
+            logger.info(f'🔍 Sell Order API Response: {response}')
+
             if 'error' in response:
                 return {'success': False, 'error': response['error'], 'message': f"Failed: {response['error']}"}
 
-            order_id = response.get('order_id', 'unknown')
+            # Extract order_id from success_response
+            order_id = None
+            if response.get('success') and 'success_response' in response:
+                order_id = response['success_response'].get('order_id')
+
+            # Fallback to top-level
+            if not order_id:
+                order_id = response.get('order_id', 'unknown')
+
+            # Validation
+            if order_id == 'unknown' or not order_id:
+                logger.error(f"❌ Failed to extract order_id from sell response: {response}")
+                return {
+                    'success': False,
+                    'error': 'Could not extract order_id from API response',
+                    'message': 'Sell order may have been created but order_id is missing',
+                    'raw_response': response
+                }
 
             order_info = {
                 'order_id': order_id,
@@ -482,7 +522,7 @@ class TradingManager:
             self.save_trade_statistics()
             self.log_trade(order_info)
 
-            logger.info(f'Market sell order created: {order_id}')
+            logger.info(f'✅ Market sell order created: {order_id}')
 
             return {
                 'success': True,
@@ -669,7 +709,7 @@ class TradingManager:
         """Get order status"""
         try:
             response = self._make_request('GET', f'/api/v3/brokerage/orders/historical/{order_id}')
-            
+
             if 'error' in response:
                 return {'order_id': order_id, 'error': response['error'], 'status': 'error'}
 
@@ -683,6 +723,60 @@ class TradingManager:
         except Exception as e:
             logger.error(f'Error getting order status: {e}')
             return {'order_id': order_id, 'error': str(e), 'status': 'error'}
+
+    async def get_order_fills(self, order_id: str) -> Dict:
+        """
+        Get fill details for an order to extract actual execution price and quantity
+
+        Returns: {
+            'success': bool,
+            'average_fill_price': float,
+            'filled_size': float,
+            'error': str (if failed)
+        }
+        """
+        try:
+            # Use the List Fills endpoint to get actual fill data
+            # GET /api/v3/brokerage/orders/historical/fills?order_id={order_id}
+            response = self._make_request('GET', f'/api/v3/brokerage/orders/historical/fills?order_id={order_id}')
+
+            if 'error' in response:
+                logger.warning(f"Could not get fills for order {order_id}: {response['error']}")
+                return {'success': False, 'error': response['error']}
+
+            fills = response.get('fills', [])
+
+            if not fills:
+                logger.warning(f"No fills found for order {order_id}")
+                return {'success': False, 'error': 'No fills found'}
+
+            # Calculate weighted average fill price and total filled size
+            total_size = 0
+            total_value = 0
+
+            for fill in fills:
+                size = float(fill.get('size', 0))
+                price = float(fill.get('price', 0))
+                total_size += size
+                total_value += (size * price)
+
+            if total_size == 0:
+                return {'success': False, 'error': 'Total filled size is zero'}
+
+            average_price = total_value / total_size
+
+            logger.info(f"Order {order_id}: Filled {total_size:.8f} @ avg ${average_price:.6f}")
+
+            return {
+                'success': True,
+                'average_fill_price': average_price,
+                'filled_size': total_size,
+                'fill_count': len(fills)
+            }
+
+        except Exception as e:
+            logger.error(f'Error getting order fills: {e}')
+            return {'success': False, 'error': str(e)}
 
     def format_order_summary(self, order_info: Dict) -> str:
         """Format order information for display"""

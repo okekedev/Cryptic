@@ -277,24 +277,61 @@ class LiveTradingManager:
             # Get order details
             order_id = order_result.get('order_id')
 
-            # Get actual fill price and quantity (wait for fill confirmation)
-            await self._wait_for_fill(order_id)
+            # Wait for fill and get actual fill price from the order (no timeout)
+            logger.info(f"🔎 Waiting for order {order_id} to fill...")
+            fill_success = await self._wait_for_fill(order_id)
 
-            # Get product info for current price
-            product_info = await self.trading_manager.get_product_info(product_id)
-            entry_price = product_info.get('current_price', 0)
+            if not fill_success:
+                # Status polling failed/gave up, check fills endpoint as fallback
+                logger.warning(f"⚠️ Status polling failed for order {order_id}, checking fills endpoint as fallback...")
+                import asyncio
+                await asyncio.sleep(2)
 
-            # Validate entry price
-            if entry_price <= 0:
-                return {
-                    'success': False,
-                    'message': f'Could not get valid price for {product_id}. Entry price: {entry_price}',
-                    'position': None,
-                    'order_result': order_result
-                }
+                fill_details = await self.trading_manager.get_order_fills(order_id)
+                logger.info(f"📋 Fills endpoint result: {fill_details}")
 
-            # Calculate position parameters
-            quantity = quote_size / entry_price
+                if fill_details.get('success'):
+                    logger.info(f"✅ Order {order_id[:8]}... did fill! Continuing with position creation.")
+                else:
+                    logger.error(f"❌ Order {order_id[:8]}... could not be confirmed. Check Coinbase manually.")
+                    return {
+                        'success': False,
+                        'message': f'Could not confirm order fill. Check Coinbase for order {order_id[:8]}...',
+                        'position': None,
+                        'order_result': order_result,
+                        'order_id': order_id
+                    }
+
+            # Give the fills endpoint a moment to update (fills may lag behind order status)
+            import asyncio
+            await asyncio.sleep(1)
+
+            # Get fill details from order
+            fill_details = await self.trading_manager.get_order_fills(order_id)
+
+            if not fill_details.get('success'):
+                # Fallback: try to get price from ticker
+                logger.warning(f"Could not get fills for {order_id}, trying ticker price as fallback")
+                product_info = await self.trading_manager.get_product_info(product_id)
+                entry_price = product_info.get('current_price', 0)
+                quantity = quote_size / entry_price if entry_price > 0 else 0
+
+                if entry_price <= 0 or quantity <= 0:
+                    return {
+                        'success': False,
+                        'message': f'Could not get valid fill price for {product_id}. Check order {order_id[:8]}... manually in Coinbase.',
+                        'position': None,
+                        'order_result': order_result
+                    }
+
+                logger.warning(f"Using ticker price as fallback: ${entry_price:.6f}")
+            else:
+                # Use actual fill price and quantity from order
+                entry_price = fill_details['average_fill_price']
+                quantity = fill_details['filled_size']
+                logger.info(f"✅ Using actual fill data: {quantity:.8f} @ ${entry_price:.6f}")
+
+            # Calculate position parameters (using actual fill values)
             buy_fee = quote_size * (BUY_FEE_PERCENT / 100)
             cost_basis = quote_size + buy_fee
 
@@ -353,12 +390,86 @@ class LiveTradingManager:
                 'order_result': None
             }
 
-    async def _wait_for_fill(self, order_id: str, max_wait_seconds: int = 10):
-        """Wait for order to fill (simple implementation)"""
-        # For now, just wait a short time
-        # TODO: Implement proper fill confirmation via get_order_status
+    async def _wait_for_fill(self, order_id: str, max_wait_seconds: int = None):
+        """Wait for order to fill by polling order status (no timeout if max_wait_seconds is None)"""
         import asyncio
-        await asyncio.sleep(2)
+
+        # Validate order_id before polling
+        if not order_id or order_id == 'unknown':
+            logger.error(f"❌ Invalid order_id '{order_id}' - cannot check fill status")
+            return False
+
+        start_time = time.time()
+        poll_interval = 0.5  # Poll every 500ms
+        consecutive_errors = 0
+        max_consecutive_errors = 10  # Increased from 5 to 10
+        poll_count = 0
+
+        logger.info(f"🔍 Starting order fill monitoring for {order_id[:8]}... (no timeout)")
+
+        while True:
+            poll_count += 1
+            elapsed = time.time() - start_time
+
+            try:
+                # Check order status
+                logger.info(f"📡 Poll #{poll_count} (elapsed: {elapsed:.1f}s) - Checking order status for {order_id[:8]}...")
+                status_result = await self.trading_manager.get_order_status(order_id)
+
+                # Log the full status result for debugging
+                logger.info(f"📊 Status API Response: {status_result}")
+
+                # Check if there's an error in the response
+                if 'error' in status_result:
+                    consecutive_errors += 1
+                    logger.warning(f"⚠️ Error getting order status (attempt {consecutive_errors}/{max_consecutive_errors}): {status_result.get('error')}")
+
+                    # If too many consecutive errors, give up on status polling
+                    if consecutive_errors >= max_consecutive_errors:
+                        logger.error(f"❌ Too many consecutive errors ({consecutive_errors}) checking order status, will rely on fills endpoint")
+                        return False
+
+                    await asyncio.sleep(poll_interval)
+                    continue
+
+                # Reset error counter on successful response
+                if consecutive_errors > 0:
+                    logger.info(f"✅ Status check recovered after {consecutive_errors} errors")
+                consecutive_errors = 0
+
+                order_status = status_result.get('status', '').upper()
+                product_id = status_result.get('product_id', 'unknown')
+                side = status_result.get('side', 'unknown')
+
+                logger.info(f"📈 Order {order_id[:8]}... status: {order_status} | Product: {product_id} | Side: {side}")
+
+                # Order is filled
+                if order_status in ['FILLED', 'DONE']:
+                    logger.info(f"✅ Order {order_id[:8]}... FILLED successfully after {elapsed:.1f}s ({poll_count} polls)")
+                    return True
+
+                # Order failed
+                if order_status in ['CANCELLED', 'EXPIRED', 'FAILED', 'REJECTED']:
+                    logger.error(f"❌ Order {order_id[:8]}... FAILED with status: {order_status} after {elapsed:.1f}s")
+                    return False
+
+                # Still pending
+                if order_status in ['PENDING', 'OPEN', 'QUEUED']:
+                    logger.info(f"⏳ Order {order_id[:8]}... still {order_status}, waiting...")
+                else:
+                    logger.info(f"🔄 Order {order_id[:8]}... status: {order_status} (continuing to monitor)")
+
+                await asyncio.sleep(poll_interval)
+
+            except Exception as e:
+                consecutive_errors += 1
+                logger.warning(f"⚠️ Exception checking order status (attempt {consecutive_errors}/{max_consecutive_errors}): {e}", exc_info=True)
+
+                if consecutive_errors >= max_consecutive_errors:
+                    logger.error(f"❌ Too many exceptions ({consecutive_errors}), will rely on fills endpoint")
+                    return False
+
+                await asyncio.sleep(poll_interval)
 
     def update_position(self, product_id: str, current_price: float) -> Optional[Dict]:
         """
