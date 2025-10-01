@@ -91,20 +91,28 @@ class TradingManager:
         except Exception as e:
             raise Exception(f"Failed to generate JWT: {e}")
 
-    def _make_request(self, method: str, path: str, json_data: Optional[Dict] = None) -> Dict:
+    def _make_request(self, method: str, path: str, json_data: Optional[Dict] = None, params: Optional[Dict] = None) -> Dict:
         """Make authenticated request to Coinbase API"""
-        # Generate JWT for this specific request
-        token = self._generate_jwt(method, path)
-        
+        # If params provided, add them to path for JWT signature
+        if params:
+            from urllib.parse import urlencode
+            query_string = urlencode(params)
+            full_path = f"{path}?{query_string}"
+        else:
+            full_path = path
+
+        # Generate JWT for this specific request (with query params if any)
+        token = self._generate_jwt(method, full_path)
+
         # Prepare headers
         headers = {
             'Authorization': f'Bearer {token}',
             'Content-Type': 'application/json'
         }
-        
+
         # Make request
-        url = f"{self.base_url}{path}"
-        
+        url = f"{self.base_url}{full_path}"
+
         try:
             if method == 'GET':
                 response = requests.get(url, headers=headers, timeout=10)
@@ -116,7 +124,7 @@ class TradingManager:
                 response = requests.put(url, headers=headers, json=json_data, timeout=10)
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
-            
+
             # Handle response
             if response.status_code == 200:
                 return response.json()
@@ -124,7 +132,7 @@ class TradingManager:
                 error_msg = f"API request failed ({response.status_code}): {response.text}"
                 logger.error(error_msg)
                 return {'error': error_msg, 'status_code': response.status_code}
-                
+
         except requests.exceptions.RequestException as e:
             logger.error(f"Request exception: {e}")
             return {'error': str(e)}
@@ -363,6 +371,13 @@ class TradingManager:
     async def create_market_buy_order(self, product_id: str, quote_size: str,
                                     position_percentage: Optional[float] = None) -> Dict:
         """Create a market buy order"""
+
+        # FORCE logging to console AND logger
+        print(f"\n{'='*60}")
+        print(f"ENTERING create_market_buy_order")
+        print(f"Product: {product_id}, Quote Size: {quote_size}")
+        print(f"{'='*60}\n")
+
         try:
             validation = self.validate_trading_conditions()
             if not validation['valid']:
@@ -383,26 +398,44 @@ class TradingManager:
                 }
             }
 
+            print(f"\nSENDING ORDER TO COINBASE:")
+            print(json.dumps(order_data, indent=2))
+
             response = self._make_request('POST', '/api/v3/brokerage/orders', json_data=order_data)
 
-            # Debug logging
+            # TRIPLE LOG THE RESPONSE
+            print(f"\n{'='*60}")
+            print(f"COINBASE RAW RESPONSE:")
+            print(json.dumps(response, indent=2))
+            print(f"{'='*60}\n")
+
+            logger.error(f'FORCED DEBUG - Full Coinbase Response: {json.dumps(response, indent=2)}')
             logger.info(f'🔍 Full Coinbase API Response: {response}')
 
             if 'error' in response:
+                print(f"ERROR IN RESPONSE: {response['error']}")
                 return {'success': False, 'error': response['error'], 'message': f"Failed: {response['error']}"}
 
-            # Extract order_id from success_response
+            # Extract order_id - VERBOSE DEBUGGING
+            print(f"\nEXTRACTING ORDER_ID:")
+            print(f"response.get('success') = {response.get('success')}")
+            print(f"'success_response' in response = {'success_response' in response}")
+
             order_id = None
             if response.get('success') and 'success_response' in response:
                 order_id = response['success_response'].get('order_id')
+                print(f"Extracted from success_response: {order_id}")
 
-            # Fallback to top-level (shouldn't happen, but defensive coding)
             if not order_id:
                 order_id = response.get('order_id', 'unknown')
+                print(f"Fallback from root level: {order_id}")
 
-            # Validation
+            print(f"FINAL order_id = {order_id}\n")
+
             if order_id == 'unknown' or not order_id:
-                logger.error(f"❌ Failed to extract order_id from response: {response}")
+                error_msg = f"Failed to extract order_id. Response keys: {list(response.keys())}"
+                print(f"ERROR: {error_msg}")
+                logger.error(error_msg)
                 return {
                     'success': False,
                     'error': 'Could not extract order_id from API response',
@@ -434,6 +467,7 @@ class TradingManager:
             self.save_trade_statistics()
             self.log_trade(order_info)
 
+            print(f"SUCCESS: Order created with ID {order_id}\n")
             logger.info(f'✅ Market buy order created: {order_id} for {quote_size} USD of {product_id}')
 
             return {
@@ -449,7 +483,10 @@ class TradingManager:
             }
 
         except Exception as e:
-            logger.error(f'Error creating market buy order: {e}')
+            print(f"\nEXCEPTION in create_market_buy_order: {e}")
+            import traceback
+            traceback.print_exc()
+            logger.error(f'Exception creating market buy order: {e}', exc_info=True)
             return {'success': False, 'error': str(e), 'message': f'Failed: {str(e)}'}
 
     async def create_market_sell_order(self, product_id: str, base_size: str) -> Dict:
@@ -708,16 +745,32 @@ class TradingManager:
     async def get_order_status(self, order_id: str) -> Dict:
         """Get order status"""
         try:
+            # _make_request is synchronous, don't await it
             response = self._make_request('GET', f'/api/v3/brokerage/orders/historical/{order_id}')
+
+            # Log raw response for debugging
+            logger.info(f'🔍 Raw order status response: {json.dumps(response, indent=2, default=str)}')
 
             if 'error' in response:
                 return {'order_id': order_id, 'error': response['error'], 'status': 'error'}
 
+            # Extract from nested 'order' object (Coinbase API structure)
+            order_data = response.get('order', {})
+
+            if not order_data:
+                logger.warning(f'No order data in response for {order_id}')
+                return {
+                    'order_id': order_id,
+                    'status': 'unknown',
+                    'side': 'unknown',
+                    'product_id': 'unknown'
+                }
+
             return {
-                'order_id': response.get('order_id', order_id),
-                'status': response.get('status', 'unknown'),
-                'side': response.get('side', 'unknown'),
-                'product_id': response.get('product_id', 'unknown')
+                'order_id': order_data.get('order_id', order_id),
+                'status': order_data.get('status', 'unknown'),
+                'side': order_data.get('side', 'unknown'),
+                'product_id': order_data.get('product_id', 'unknown')
             }
 
         except Exception as e:
@@ -725,53 +778,33 @@ class TradingManager:
             return {'order_id': order_id, 'error': str(e), 'status': 'error'}
 
     async def get_order_fills(self, order_id: str) -> Dict:
-        """
-        Get fill details for an order to extract actual execution price and quantity
-
-        Returns: {
-            'success': bool,
-            'average_fill_price': float,
-            'filled_size': float,
-            'error': str (if failed)
-        }
-        """
+        """Get fill details from order status endpoint"""
         try:
-            # Use the List Fills endpoint to get actual fill data
-            # GET /api/v3/brokerage/orders/historical/fills?order_id={order_id}
-            response = self._make_request('GET', f'/api/v3/brokerage/orders/historical/fills?order_id={order_id}')
+            # Use the order details endpoint instead of fills
+            response = self._make_request('GET', f'/api/v3/brokerage/orders/historical/{order_id}')
+
+            logger.info(f'🔍 Order details response: {json.dumps(response, indent=2, default=str)}')
 
             if 'error' in response:
-                logger.warning(f"Could not get fills for order {order_id}: {response['error']}")
                 return {'success': False, 'error': response['error']}
 
-            fills = response.get('fills', [])
+            order = response.get('order', {})
 
-            if not fills:
-                logger.warning(f"No fills found for order {order_id}")
-                return {'success': False, 'error': 'No fills found'}
+            # Extract fill info from order
+            filled_size = float(order.get('filled_size', 0))
+            filled_value = float(order.get('filled_value', 0))
 
-            # Calculate weighted average fill price and total filled size
-            total_size = 0
-            total_value = 0
+            if filled_size == 0:
+                return {'success': False, 'error': 'No filled size'}
 
-            for fill in fills:
-                size = float(fill.get('size', 0))
-                price = float(fill.get('price', 0))
-                total_size += size
-                total_value += (size * price)
+            average_price = filled_value / filled_size
 
-            if total_size == 0:
-                return {'success': False, 'error': 'Total filled size is zero'}
-
-            average_price = total_value / total_size
-
-            logger.info(f"Order {order_id}: Filled {total_size:.8f} @ avg ${average_price:.6f}")
+            logger.info(f"Order {order_id}: Filled {filled_size:.8f} @ avg ${average_price:.6f}")
 
             return {
                 'success': True,
                 'average_fill_price': average_price,
-                'filled_size': total_size,
-                'fill_count': len(fills)
+                'filled_size': filled_size
             }
 
         except Exception as e:

@@ -6,6 +6,7 @@ import os
 import logging
 import sqlite3
 import time
+import json
 from datetime import datetime
 from typing import Dict, Optional, Tuple
 from dataclasses import dataclass, asdict
@@ -249,9 +250,17 @@ class LiveTradingManager:
             'order_result': dict
         }
         """
+        print(f"\n{'='*60}")
+        print(f"🔵 EXECUTE_BUY CALLED")
+        print(f"🔵 product_id: {product_id}")
+        print(f"🔵 quote_size: {quote_size}")
+        print(f"🔵 position_percentage: {position_percentage}")
+        print(f"{'='*60}\n")
+
         try:
             # Check if we already have a position
             if product_id in self.positions:
+                print(f"⚠️ Already have position in {product_id}")
                 return {
                     'success': False,
                     'message': f"Already have active position in {product_id}",
@@ -260,22 +269,42 @@ class LiveTradingManager:
                 }
 
             # Execute market buy via TradingManager
+            print(f"📞 Calling trading_manager.create_market_buy_order...")
             order_result = await self.trading_manager.create_market_buy_order(
                 product_id=product_id,
                 quote_size=str(quote_size),
                 position_percentage=position_percentage
             )
 
+            print(f"\n{'='*60}")
+            print(f"📥 ORDER_RESULT FROM create_market_buy_order:")
+            print(json.dumps(order_result, indent=2, default=str))
+            print(f"{'='*60}\n")
+
             if not order_result.get('success'):
+                print(f"❌ Order failed: {order_result.get('message')}")
                 return {
                     'success': False,
-                    'message': order_result.get('message', 'Order failed'),
+                    'message': order_result.get('message', 'Order Failed'),
                     'position': None,
                     'order_result': order_result
                 }
+                
+            
+            
+            # Get order details - Already extracted to root level by trading_manager
+            order_id = order_result.get('order_id', 'unknown')
 
-            # Get order details
-            order_id = order_result.get('order_id')
+            # Additional validation
+            if not order_id or order_id == 'unknown':
+                logger.error(f"❌ Failed to get order_id from response")
+                logger.error(f"Response keys: {list(order_result.keys())}")
+                return {
+                    'success': False,
+                    'message': 'Order created but failed to get order ID from response',
+                    'position': None,
+                    'order_result': order_result
+                }
 
             # Wait for fill and get actual fill price from the order (no timeout)
             logger.info(f"🔎 Waiting for order {order_id} to fill...")
