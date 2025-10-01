@@ -227,6 +227,52 @@ app.delete("/priority-pairs", (req, res) => {
   }
 });
 
+// Batch set priority pairs (for live trading - replaces all priority pairs)
+app.put("/priority-pairs", (req, res) => {
+  try {
+    const { product_ids } = req.body;
+
+    if (!Array.isArray(product_ids)) {
+      return res.status(400).json({
+        error: "product_ids must be an array"
+      });
+    }
+
+    if (wsHandlerProcess && wsHandlerReady) {
+      // Clear existing priority pairs first
+      wsHandlerProcess.stdin.write(JSON.stringify({ type: 'clear_priority_pairs' }) + '\n');
+
+      // Add new priority pairs
+      if (product_ids.length > 0) {
+        product_ids.forEach(product_id => {
+          const command = {
+            type: 'priority_pair',
+            action: 'add',
+            product_id: product_id
+          };
+          wsHandlerProcess.stdin.write(JSON.stringify(command) + '\n');
+        });
+      }
+
+      res.json({
+        success: true,
+        message: `Set ${product_ids.length} priority pair(s)`,
+        product_ids: product_ids
+      });
+    } else {
+      res.status(503).json({
+        error: "WebSocket handler not ready"
+      });
+    }
+  } catch (error) {
+    console.error("Error setting priority pairs:", error);
+    res.status(500).json({
+      error: "Internal server error",
+      message: error.message
+    });
+  }
+});
+
 // Health check endpoint
 app.get("/health", (req, res) => {
   if (wsHandlerProcess && wsHandlerReady) {

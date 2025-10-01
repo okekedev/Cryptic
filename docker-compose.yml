@@ -65,6 +65,8 @@ services:
     ports:
       - "8080:8080"  # Webhook server
       - "8081:8081"  # Direct Socket.IO server for spike alerts
+    volumes:
+      - ./data:/app/data  # Mount data directory for databases
     env_file:
       - .env
     environment:
@@ -110,6 +112,38 @@ services:
       - BUY_FEE_PERCENT=${BUY_FEE_PERCENT:-0.6}
       - SELL_FEE_PERCENT=${SELL_FEE_PERCENT:-0.4}
       - DB_PATH=/app/data/paper_trading.db
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  dump-trading:
+    build:
+      context: ./bots/dump-trading
+      dockerfile: Dockerfile
+    container_name: bot-dump-trading
+    depends_on:
+      - backend
+      - spike-detector
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      - BACKEND_URL=http://backend:5000
+      - DUMP_INITIAL_CAPITAL=${DUMP_INITIAL_CAPITAL:-10000.0}
+      - DUMP_MAX_LOSS_PERCENT=${DUMP_MAX_LOSS_PERCENT:-2.0}
+      - DUMP_MIN_PROFIT_TARGET=${DUMP_MIN_PROFIT_TARGET:-1.0}
+      - DUMP_TARGET_PROFIT=${DUMP_TARGET_PROFIT:-3.0}
+      - DUMP_TRAILING_THRESHOLD=${DUMP_TRAILING_THRESHOLD:-0.5}
+      - DUMP_MIN_HOLD_TIME_MINUTES=${DUMP_MIN_HOLD_TIME_MINUTES:-5.0}
+      - DUMP_MAX_HOLD_TIME_MINUTES=${DUMP_MAX_HOLD_TIME_MINUTES:-15.0}
+      - VOLUME_SURGE_THRESHOLD=${VOLUME_SURGE_THRESHOLD:-1.5}
+      - RSI_OVERBOUGHT=${RSI_OVERBOUGHT:-70.0}
+      - SMA_PERIOD=${SMA_PERIOD:-5}
+      - DEFAULT_BUY_FEE_PERCENT=${DEFAULT_BUY_FEE_PERCENT:-0.6}
+      - DEFAULT_SELL_FEE_PERCENT=${DEFAULT_SELL_FEE_PERCENT:-0.4}
+      - DUMP_DB_PATH=/app/data/dump_trading.db
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     networks:
       - app-network

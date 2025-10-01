@@ -14,6 +14,8 @@ import json
 from trading_manager import TradingManager
 from price_monitor import PriceMonitor
 from socket_server import SpikeAlertSocketServer
+from live_trading_manager import LiveTradingManager
+from trading_state import TradingStateController
 
 # Custom filter to block getUpdates logs
 class IgnoreGetUpdatesFilter(logging.Filter):
@@ -52,6 +54,8 @@ alerts_enabled = True
 trading_manager = None
 price_monitor = None
 spike_socket_server = None
+live_trading_manager = None  # NEW: Manages live positions with automated logic
+trading_state_controller = None  # NEW: Controls WebSocket feed switching
 
 # User preferences for trading
 DEFAULT_POSITION_PERCENTAGE = float(os.getenv('DEFAULT_POSITION_PERCENTAGE', '2.0'))
@@ -505,11 +509,11 @@ async def disable_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /test command"""
     test_data = {
-        "symbol": "BTC-USD",
+        "symbol": "DOGE-USD",  # Cheap coin for safe testing
         "spike_type": "pump",
         "pct_change": 5.23,
-        "old_price": 45230.50,
-        "new_price": 47592.75,
+        "old_price": 0.08450,
+        "new_price": 0.08892,
         "time_span_seconds": 300,
         "timestamp": datetime.now().isoformat()
     }
@@ -826,6 +830,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             percentage = params[3] if len(params) > 3 else "2.0"
             await handle_buy_confirmation(query, product_id, amount, percentage, chat_id)
 
+        elif data.startswith("execute_buy:"):
+            params = data.split(":", 3)
+            product_id = params[1]
+            amount = params[2]
+            percentage = params[3] if len(params) > 3 else "2.0"
+            await handle_execute_buy(query, product_id, amount, percentage, chat_id)
+
         elif data.startswith("market_sell:"):
             product_id = data.split(":", 1)[1]
             await handle_market_sell_request(query, product_id, chat_id)
@@ -875,6 +886,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await handle_position_card_refresh(query, product_id)
                 elif action == "cancel":
                     await handle_position_action_cancel(query, product_id, chat_id)
+
+        # Test command callbacks
+        elif data.startswith("test_"):
+            from test_commands import handle_test_callbacks
+            await handle_test_callbacks(query, data)
 
         else:
             await query.edit_message_text("❌ Unknown action")
@@ -931,53 +947,110 @@ async def handle_buy_request(query, product_id: str, chat_id: str):
 
 
 async def handle_buy_confirmation(query, product_id: str, amount: str, percentage: str, chat_id: str):
-    """Handle buy confirmation and execute order"""
+    """
+    Handle buy confirmation with verification and automated trading setup
+    NEW: Integrates with LiveTradingManager for automated exit logic
+    """
     try:
-        # Execute the buy order
-        order_result = await trading_manager.create_market_buy_order(
-            product_id=product_id,
-            quote_size=amount,
-            position_percentage=float(percentage)
+        # VERIFICATION STEP: Get current price to verify it hasn't changed dramatically
+        product_info = await trading_manager.get_product_info(product_id)
+
+        if 'error' in product_info:
+            await query.edit_message_text(f"❌ Error verifying product: {product_info['error']}")
+            return
+
+        current_price = product_info.get('current_price', 0)
+        amount_float = float(amount)
+        estimated_quantity = amount_float / current_price if current_price > 0 else 0
+
+        # Show verification prompt
+        verification_message = (
+            f"⚠️ *VERIFY PURCHASE*\n\n"
+            f"*Product:* {product_id}\n"
+            f"*Amount:* ${amount_float:,.2f}\n"
+            f"*Current Price:* ${current_price:,.6f}\n"
+            f"*Est. Quantity:* {estimated_quantity:.8f}\n"
+            f"*Est. Fees:* ${amount_float * 0.006:,.2f} (0.6%)\n\n"
+            f"🤖 *Trading Mode:* Automated\n"
+            f"• Profit Target: 3%+\n"
+            f"• Trailing Stop: 1.5%\n"
+            f"• Stop Loss: -5%\n"
+            f"• Min Hold: 30 min\n\n"
+            f"⚡ After purchase, bot will manage exits automatically.\n"
+            f"Position card will show live P&L.\n\n"
+            f"Proceed with purchase?"
         )
 
-        if order_result['success']:
-            message = trading_manager.format_order_summary(order_result)
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ CONFIRM PURCHASE", callback_data=f"execute_buy:{product_id}:{amount}:{percentage}"),
+                InlineKeyboardButton("❌ Cancel", callback_data=f"ignore:{product_id}")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
-            # Start position monitoring
-            product_info = await trading_manager.get_product_info(product_id)
-            entry_price = product_info.get('current_price', 0)
-
-            # Send position monitoring message
-            monitor_message = (
-                f"📊 *Position Monitor Started*\n\n"
-                f"*Pair:* {product_id}\n"
-                f"*Entry Price:* ${entry_price:,.6f}\n"
-                f"*Amount:* ${float(amount):,.2f}\n\n"
-                f"Live updates will appear below..."
-            )
-
-            sent_message = await query.message.reply_text(
-                monitor_message,
-                parse_mode='Markdown'
-            )
-
-            # Start monitoring with the message ID
-            await price_monitor.start_position_monitoring(
-                product_id=product_id,
-                chat_id=chat_id,
-                entry_price=entry_price,
-                entry_amount=float(amount),
-                message_id=sent_message.message_id
-            )
-
-            await query.edit_message_text(message, parse_mode='Markdown')
-
-        else:
-            await query.edit_message_text(f"❌ {order_result['message']}")
+        await query.edit_message_text(verification_message, parse_mode='Markdown', reply_markup=reply_markup)
 
     except Exception as e:
         logger.error(f"Error in buy confirmation: {e}")
-        await query.edit_message_text(f"❌ Buy order failed: {str(e)}")
+        await query.edit_message_text(f"❌ Verification failed: {str(e)}")
+
+
+async def handle_execute_buy(query, product_id: str, amount: str, percentage: str, chat_id: str):
+    """
+    Execute verified buy order and setup automated trading
+    NEW: Uses LiveTradingManager for automated position management
+    """
+    try:
+        await query.edit_message_text(f"⏳ Executing buy order for {product_id}...")
+
+        # Execute buy through LiveTradingManager (includes automated tracking)
+        result = await live_trading_manager.execute_buy(
+            product_id=product_id,
+            quote_size=float(amount),
+            position_percentage=float(percentage)
+        )
+
+        if not result['success']:
+            await query.edit_message_text(f"❌ {result['message']}")
+            return
+
+        position = result['position']
+
+        # Create position card
+        await create_position_card(
+            bot=application.bot,
+            product_id=product_id,
+            entry_price=position.entry_price,
+            quantity=position.quantity,
+            cost_basis=position.cost_basis
+        )
+
+        # Update trading state and switch WebSocket to priority mode
+        await trading_state_controller.add_position(product_id)
+
+        # Show success message
+        success_message = (
+            f"✅ *Purchase Complete*\n\n"
+            f"*Product:* {product_id}\n"
+            f"*Entry Price:* ${position.entry_price:,.6f}\n"
+            f"*Quantity:* {position.quantity:.8f}\n"
+            f"*Cost:* ${position.cost_basis:,.2f}\n\n"
+            f"🤖 *Automated Trading Active*\n"
+            f"• Min Exit: ${position.min_exit_price:,.6f} (+3%)\n"
+            f"• Stop Loss: ${position.stop_loss_price:,.6f} (-5%)\n"
+            f"• Trailing Stop: ${position.trailing_exit_price:,.6f}\n\n"
+            f"📊 Position card created below.\n"
+            f"Bot will manage exits automatically."
+        )
+
+        await query.edit_message_text(success_message, parse_mode='Markdown')
+
+        logger.info(f"✅ Live trading activated for {product_id} - WebSocket switched to priority mode")
+
+    except Exception as e:
+        logger.error(f"Error executing buy: {e}")
+        await query.edit_message_text(f"❌ Purchase failed: {str(e)}")
 
 
 async def handle_chart_request(query, product_id: str):
@@ -1283,7 +1356,10 @@ async def handle_position_limit_confirm(query, product_id: str, price: float, ch
 
 
 async def handle_position_limit_execute(query, product_id: str, price: float, chat_id: str):
-    """Execute limit sell order"""
+    """
+    Execute limit sell order and enter hibernation mode
+    NEW: Uses LiveTradingManager to set hibernation state
+    """
     try:
         if product_id not in active_position_cards:
             await query.edit_message_text("❌ Position not found")
@@ -1294,29 +1370,41 @@ async def handle_position_limit_execute(query, product_id: str, price: float, ch
 
         # Cancel existing orders first
         cancel_result = await cancel_existing_orders(product_id)
-        if not cancel_result['success']:
-            await query.edit_message_text(f"⚠️ Warning: {cancel_result['message']}\n\nProceed anyway?")
-            # Continue anyway
-        elif cancel_result['cancelled_count'] > 0:
+        if cancel_result['cancelled_count'] > 0:
             logger.info(f"Cancelled {cancel_result['cancelled_count']} existing order(s) for {product_id}")
 
-        # TODO: Place limit order using trading_manager
-        # result = await trading_manager.create_limit_sell_order(product_id, card['quantity'], price)
+        # Set limit order via LiveTradingManager (enters hibernation mode)
+        if live_trading_manager:
+            result = await live_trading_manager.set_limit_order(product_id, price)
 
-        # For now, just show success message
-        message = (
-            f"✅ *Limit Order Placed*\n\n"
-            f"Product: {product_id}\n"
-            f"Quantity: {card['quantity']:.8f}\n"
-            f"Limit Price: ${price:,.6f}\n\n"
-            f"ℹ️ Order will execute when price reaches ${price:,.6f}"
-        )
+            if not result['success']:
+                await query.edit_message_text(f"❌ Error: {result['message']}")
+                return
+
+            message = (
+                f"💤 *HIBERNATION MODE ACTIVATED*\n\n"
+                f"Product: {product_id}\n"
+                f"Limit Price: ${price:,.6f}\n"
+                f"Quantity: {card['quantity']:.8f}\n\n"
+                f"🤖 Bot has paused automated exits.\n"
+                f"📊 Position card will show hibernating status.\n"
+                f"⏳ Waiting for limit order fill at ${price:,.6f}"
+            )
+        else:
+            # Fallback if LiveTradingManager not available
+            message = (
+                f"✅ *Limit Order Placed*\n\n"
+                f"Product: {product_id}\n"
+                f"Quantity: {card['quantity']:.8f}\n"
+                f"Limit Price: ${price:,.6f}\n\n"
+                f"ℹ️ Order will execute when price reaches ${price:,.6f}"
+            )
 
         keyboard = [[InlineKeyboardButton("🔙 Back to Position", callback_data=f"pos_action:{product_id}:refresh:0")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await query.edit_message_text(message, parse_mode='Markdown', reply_markup=reply_markup)
-        logger.info(f"Limit order placed: {product_id} @ ${price}")
+        logger.info(f"💤 Limit order set - {product_id} entering hibernation @ ${price}")
 
     except Exception as e:
         logger.error(f"Error executing limit order: {e}")
@@ -1375,7 +1463,10 @@ async def handle_position_market_confirm(query, product_id: str, chat_id: str):
 
 
 async def handle_position_market_execute(query, product_id: str, chat_id: str):
-    """Execute market sell order"""
+    """
+    Execute manual market sell order
+    NEW: Uses LiveTradingManager and updates trading state
+    """
     try:
         if product_id not in active_position_cards:
             await query.edit_message_text("❌ Position not found")
@@ -1386,25 +1477,50 @@ async def handle_position_market_execute(query, product_id: str, chat_id: str):
 
         # Cancel existing orders first
         cancel_result = await cancel_existing_orders(product_id)
-        if not cancel_result['success']:
-            logger.warning(f"Order cancellation warning: {cancel_result['message']}")
-            # Continue anyway
-        elif cancel_result['cancelled_count'] > 0:
+        if cancel_result['cancelled_count'] > 0:
             logger.info(f"Cancelled {cancel_result['cancelled_count']} existing order(s) for {product_id}")
 
-        # TODO: Execute market sell using trading_manager
-        # result = await trading_manager.create_market_sell_order(product_id, card['quantity'])
+        # Execute via LiveTradingManager
+        if live_trading_manager:
+            result = await live_trading_manager.execute_manual_exit(product_id)
 
-        # For now, archive the card
-        await archive_position_card(application.bot, product_id, card['current_price'], "Manual market sell")
+            if not result['success']:
+                await query.edit_message_text(f"❌ Error: {result['message']}")
+                return
 
-        message = (
-            f"✅ *Market Sell Executed*\n\n"
-            f"Product: {product_id}\n"
-            f"Quantity: {card['quantity']:.8f}\n"
-            f"Executed at: ~${card['current_price']:,.6f}\n\n"
-            f"ℹ️ Check your fills for exact execution price"
-        )
+            # Archive the card
+            await archive_position_card(application.bot, product_id, card['current_price'], "Manual market sell")
+
+            # Update trading state (remove from priority feed)
+            await trading_state_controller.remove_position(product_id)
+
+            pnl_data = result.get('pnl_data', {})
+            pnl = pnl_data.get('pnl', 0)
+            pnl_pct = pnl_data.get('pnl_percent', 0)
+            pnl_sign = "+" if pnl >= 0 else ""
+            pnl_emoji = "📈" if pnl >= 0 else "📉"
+
+            message = (
+                f"✅ *Market Sell Executed*\n\n"
+                f"Product: {product_id}\n"
+                f"Quantity: {card['quantity']:.8f}\n"
+                f"Exit Price: ${card['current_price']:,.6f}\n"
+                f"Net Proceeds: ${pnl_data.get('net_proceeds', 0):,.2f}\n\n"
+                f"Final P&L: {pnl_sign}${abs(pnl):.2f} ({pnl_sign}{pnl_pct:.2f}%) {pnl_emoji}\n\n"
+                f"📊 Position closed\n"
+                f"🔄 WebSocket feed updated"
+            )
+        else:
+            # Fallback if LiveTradingManager not available
+            await archive_position_card(application.bot, product_id, card['current_price'], "Manual market sell")
+
+            message = (
+                f"✅ *Market Sell Executed*\n\n"
+                f"Product: {product_id}\n"
+                f"Quantity: {card['quantity']:.8f}\n"
+                f"Executed at: ~${card['current_price']:,.6f}\n\n"
+                f"ℹ️ Check your fills for exact execution price"
+            )
 
         await query.edit_message_text(message, parse_mode='Markdown')
         logger.info(f"Market sell executed: {product_id}")
@@ -1597,25 +1713,52 @@ async def create_position_card(bot: Bot, product_id: str, entry_price: float, qu
 
 def format_position_card_message(product_id: str, entry_price: float, entry_time: str,
                                   quantity: float, cost_basis: float, current_price: float,
-                                  pnl_usd: float, pnl_pct: float) -> str:
-    """Format the position card message"""
+                                  pnl_usd: float, pnl_pct: float, mode: str = "automated",
+                                  trailing_stop: float = None, stop_loss: float = None,
+                                  peak_price: float = None) -> str:
+    """
+    Format the position card message with automated trading status
+    NEW: Shows bot mode, trailing stop, stop loss, and peak price
+    """
     pnl_emoji = "📈" if pnl_usd >= 0 else "📉"
     pnl_sign = "+" if pnl_usd >= 0 else ""
 
+    # Mode indicator
+    if mode == "automated":
+        mode_indicator = "🤖 *Automated Trading*"
+    elif mode == "manual_limit_order":
+        mode_indicator = "💤 *Hibernating* (Limit Order)"
+    else:
+        mode_indicator = "👁️ *Manual Mode*"
+
     message = (
-        f"📊 *ACTIVE POSITION: {product_id}*\n\n"
+        f"📊 *ACTIVE POSITION: {product_id}*\n"
+        f"{mode_indicator}\n\n"
         f"Entry: ${entry_price:,.6f} @ {entry_time}\n"
         f"Quantity: {quantity:.8f}\n"
         f"Cost Basis: ${cost_basis:.2f}\n\n"
-        f"Current Price: ${current_price:,.6f} {pnl_emoji}\n"
+        f"Current: ${current_price:,.6f} {pnl_emoji}\n"
         f"Unrealized P&L: {pnl_sign}${abs(pnl_usd):.2f} ({pnl_sign}{pnl_pct:.2f}%)\n"
     )
+
+    # Add automated trading details if available
+    if mode == "automated" and (trailing_stop or stop_loss or peak_price):
+        message += "\n🎯 *Trading Thresholds:*\n"
+        if peak_price:
+            message += f"Peak: ${peak_price:,.6f}\n"
+        if trailing_stop:
+            message += f"Trailing Stop: ${trailing_stop:,.6f}\n"
+        if stop_loss:
+            message += f"Stop Loss: ${stop_loss:,.6f}\n"
 
     return message
 
 
 async def update_position_card(bot: Bot, product_id: str, current_price: float):
-    """Update position card with current price (rate limited)"""
+    """
+    Update position card with current price and live trading status
+    NEW: Fetches live position data from LiveTradingManager
+    """
     global active_position_cards
 
     if product_id not in active_position_cards:
@@ -1630,6 +1773,11 @@ async def update_position_card(bot: Bot, product_id: str, current_price: float):
         return
 
     try:
+        # Get live position data if available
+        live_position = None
+        if live_trading_manager:
+            live_position = live_trading_manager.get_position(product_id)
+
         # Calculate P&L
         card['current_price'] = current_price
         gross_value = current_price * card['quantity']
@@ -1637,6 +1785,7 @@ async def update_position_card(bot: Bot, product_id: str, current_price: float):
         card['pnl_pct'] = (card['pnl_usd'] / card['cost_basis']) * 100
         card['last_update'] = current_time
 
+        # Format message with live position data
         message = format_position_card_message(
             product_id=product_id,
             entry_price=card['entry_price'],
@@ -1645,18 +1794,36 @@ async def update_position_card(bot: Bot, product_id: str, current_price: float):
             cost_basis=card['cost_basis'],
             current_price=current_price,
             pnl_usd=card['pnl_usd'],
-            pnl_pct=card['pnl_pct']
+            pnl_pct=card['pnl_pct'],
+            mode=live_position.mode if live_position else "manual",
+            trailing_stop=live_position.trailing_exit_price if live_position else None,
+            stop_loss=live_position.stop_loss_price if live_position else None,
+            peak_price=live_position.peak_price if live_position else None
         )
 
-        keyboard = [
-            [
-                InlineKeyboardButton("📊 Set Limit Order", callback_data=f"pos_action:{product_id}:limit:prompt"),
-                InlineKeyboardButton("💰 Sell at Market", callback_data=f"pos_action:{product_id}:market:confirm")
-            ],
-            [
-                InlineKeyboardButton("🔄 Refresh", callback_data=f"pos_action:{product_id}:refresh")
+        # Adjust buttons based on mode
+        if live_position and live_position.mode == "manual_limit_order":
+            # Hibernating mode - show cancel limit order button
+            keyboard = [
+                [
+                    InlineKeyboardButton("❌ Cancel Limit Order", callback_data=f"pos_action:{product_id}:cancel_limit:confirm"),
+                    InlineKeyboardButton("💰 Sell Now", callback_data=f"pos_action:{product_id}:market:confirm")
+                ],
+                [
+                    InlineKeyboardButton("🔄 Refresh", callback_data=f"pos_action:{product_id}:refresh")
+                ]
             ]
-        ]
+        else:
+            # Automated or manual mode - standard buttons
+            keyboard = [
+                [
+                    InlineKeyboardButton("📊 Set Limit Order", callback_data=f"pos_action:{product_id}:limit:prompt"),
+                    InlineKeyboardButton("💰 Sell at Market", callback_data=f"pos_action:{product_id}:market:confirm")
+                ],
+                [
+                    InlineKeyboardButton("🔄 Refresh", callback_data=f"pos_action:{product_id}:refresh")
+                ]
+            ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await bot.edit_message_text(
@@ -1859,42 +2026,86 @@ async def start_webhook_server(app: Application):
 
 
 async def live_position_updater(bot: Bot):
-    """Background task to continuously update active position cards with live prices"""
+    """
+    Background task to update position cards AND execute automated exits
+    NEW: Integrates with LiveTradingManager for automated trading logic
+    """
     import aiohttp
 
-    logger.info("🔄 Live position updater started")
+    logger.info("🔄 Live position updater started (with automated exit logic)")
 
     await asyncio.sleep(10)  # Wait for bot to fully initialize
 
     async with aiohttp.ClientSession() as session:
         while True:
             try:
-                if not active_position_cards:
+                # Check if we have any live positions to track
+                if not live_trading_manager or len(live_trading_manager.positions) == 0:
                     await asyncio.sleep(5)
                     continue
 
                 # Fetch current prices from backend
                 try:
-                    logger.info(f"📊 Fetching prices for {len(active_position_cards)} active position(s)")
+                    active_product_ids = live_trading_manager.get_active_product_ids()
+                    logger.debug(f"📊 Fetching prices for {len(active_product_ids)} active position(s)")
+
                     async with session.get(f"{BACKEND_URL}/tickers", timeout=aiohttp.ClientTimeout(total=5)) as response:
                         if response.status == 200:
                             data = await response.json()
-                            # Data is a dict with crypto as key: {crypto: {price: ...}}
                             prices = {crypto: ticker['price'] for crypto, ticker in data.items()}
-                            logger.info(f"✅ Fetched {len(prices)} prices from backend")
 
-                            # Update each active position card
-                            for product_id in list(active_position_cards.keys()):
-                                if product_id in prices:
-                                    logger.info(f"📈 Updating {product_id} with price ${prices[product_id]:,.2f}")
-                                    await update_position_card(bot, product_id, prices[product_id])
+                            # Update each active position with automated logic
+                            for product_id in active_product_ids:
+                                if product_id not in prices:
+                                    continue
+
+                                current_price = prices[product_id]
+                                position = live_trading_manager.get_position(product_id)
+
+                                if not position:
+                                    continue
+
+                                # Update position card UI
+                                await update_position_card(bot, product_id, current_price)
+
+                                # AUTOMATED EXIT LOGIC (only in automated mode)
+                                if position.mode == "automated":
+                                    exit_info = live_trading_manager.update_position(product_id, current_price)
+
+                                    if exit_info and exit_info.get('should_exit'):
+                                        # Execute automated exit
+                                        logger.info(f"🤖 Automated exit triggered for {product_id}: {exit_info['reason']}")
+
+                                        exit_result = await live_trading_manager.execute_automated_exit(
+                                            product_id=product_id,
+                                            exit_price=current_price,
+                                            reason=exit_info['reason']
+                                        )
+
+                                        if exit_result['success']:
+                                            # Archive position card
+                                            await archive_position_card(
+                                                bot=bot,
+                                                product_id=product_id,
+                                                exit_price=current_price,
+                                                reason=exit_info['reason']
+                                            )
+
+                                            # Update trading state (remove from priority feed)
+                                            await trading_state_controller.remove_position(product_id)
+
+                                            logger.info(f"✅ Automated exit complete for {product_id}")
+                                        else:
+                                            logger.error(f"Failed automated exit for {product_id}: {exit_result.get('message')}")
+
                         else:
                             logger.warning(f"Backend returned status {response.status}")
-                except Exception as e:
-                    logger.error(f"Error fetching prices: {e}", exc_info=True)
 
-                # Update every 3 seconds (bot rate limits to 5s per card internally)
-                await asyncio.sleep(3)
+                except Exception as e:
+                    logger.error(f"Error in position update cycle: {e}", exc_info=True)
+
+                # Update every 2 seconds for faster response to exit conditions
+                await asyncio.sleep(2)
 
             except Exception as e:
                 logger.error(f"Error in live position updater: {e}")
@@ -1903,7 +2114,7 @@ async def live_position_updater(bot: Bot):
 
 async def post_init(app: Application) -> None:
     """Initialize bot after startup"""
-    global trading_manager, price_monitor, spike_socket_server
+    global trading_manager, price_monitor, spike_socket_server, live_trading_manager, trading_state_controller
 
     # Initialize position cards database
     init_position_cards_db()
@@ -1914,6 +2125,18 @@ async def post_init(app: Application) -> None:
         trading_manager = TradingManager()
         logger.info("✅ Trading Manager initialized")
 
+        # Initialize live trading manager (with automated exit logic)
+        live_trading_manager = LiveTradingManager(trading_manager)
+        logger.info(f"✅ Live Trading Manager initialized with {len(live_trading_manager.positions)} active position(s)")
+
+        # Initialize trading state controller (WebSocket feed management)
+        trading_state_controller = TradingStateController(BACKEND_URL)
+
+        # Set initial trading state based on restored positions
+        active_products = live_trading_manager.get_active_product_ids()
+        await trading_state_controller.set_trading_state(active_products)
+        logger.info(f"✅ Trading State Controller initialized (state: {trading_state_controller.trading_state})")
+
         # Initialize price monitor
         price_monitor = PriceMonitor(app.bot, BACKEND_URL)
         await price_monitor.start()
@@ -1923,6 +2146,8 @@ async def post_init(app: Application) -> None:
         logger.error(f"Failed to initialize trading components: {e}")
         # Continue without trading functionality
         trading_manager = None
+        live_trading_manager = None
+        trading_state_controller = None
         price_monitor = None
 
     # Initialize direct spike alert Socket.IO server
@@ -2015,6 +2240,21 @@ def main() -> None:
     application.add_handler(CommandHandler("edit_order", edit_order_command))
     application.add_handler(CommandHandler("fills", fills_command))
     application.add_handler(CommandHandler("trading_stats", trading_stats_command))
+
+    # Testing commands
+    from test_commands import (
+        test_buy_flow_command,
+        test_price_simulator_command,
+        test_websocket_state_command,
+        test_position_modes_command,
+        test_full_integration_command,
+        handle_test_callbacks
+    )
+    application.add_handler(CommandHandler("testbuy", test_buy_flow_command))
+    application.add_handler(CommandHandler("testprices", test_price_simulator_command))
+    application.add_handler(CommandHandler("testwebsocket", test_websocket_state_command))
+    application.add_handler(CommandHandler("testmodes", test_position_modes_command))
+    application.add_handler(CommandHandler("testintegration", test_full_integration_command))
 
     # Add callback query handler for inline buttons
     application.add_handler(CallbackQueryHandler(button_callback))

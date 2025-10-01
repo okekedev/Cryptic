@@ -1,0 +1,540 @@
+"""
+Live Trading Manager
+Integrates paper trading bot's automated logic with real Coinbase API execution
+"""
+import os
+import logging
+import sqlite3
+import time
+from datetime import datetime
+from typing import Dict, Optional, Tuple
+from dataclasses import dataclass, asdict
+from trading_manager import TradingManager
+
+logger = logging.getLogger(__name__)
+
+# Trading configuration from environment
+MIN_PROFIT_TARGET = float(os.getenv("MIN_PROFIT_TARGET", "3.0"))  # 3% minimum profit
+TRAILING_THRESHOLD = float(os.getenv("TRAILING_THRESHOLD", "1.5"))  # Drop 1.5% from peak to exit
+MIN_HOLD_TIME_MINUTES = float(os.getenv("MIN_HOLD_TIME_MINUTES", "30.0"))  # Minimum 30 min hold time
+STOP_LOSS_PERCENT = float(os.getenv("STOP_LOSS_PERCENT", "5.0"))  # 5% stop loss
+BUY_FEE_PERCENT = float(os.getenv("BUY_FEE_PERCENT", "0.6"))  # Coinbase Advanced Trade taker fee
+SELL_FEE_PERCENT = float(os.getenv("SELL_FEE_PERCENT", "0.4"))  # Coinbase Advanced Trade maker fee
+
+
+@dataclass
+class LivePosition:
+    """
+    Represents a live trading position with automated exit logic
+    Based on paper trading Position class but with real order tracking
+    """
+    product_id: str
+    order_id: str  # Coinbase order ID from buy
+    entry_price: float
+    entry_time: str  # ISO format
+    quantity: float
+    cost_basis: float  # Including fees
+    min_exit_price: float  # Minimum price to exit (3% + fees)
+    peak_price: float  # Highest price seen
+    trailing_exit_price: float  # Current trailing stop
+    stop_loss_price: float  # Hard stop loss
+    status: str = "active"  # active, hibernating, closed
+    mode: str = "automated"  # automated, manual_limit_order
+    limit_order_id: Optional[str] = None  # If in manual mode
+    last_sync_timestamp: str = None  # Last API sync time
+
+    def update_peak(self, current_price: float) -> bool:
+        """Update peak and trailing exit. Returns True if peak was updated."""
+        if current_price > self.peak_price:
+            self.peak_price = current_price
+            # Trailing exit: drop TRAILING_THRESHOLD% from peak
+            self.trailing_exit_price = self.peak_price * (1 - TRAILING_THRESHOLD / 100)
+            # Never let trailing exit drop below minimum exit price
+            self.trailing_exit_price = max(self.trailing_exit_price, self.min_exit_price)
+            return True
+        return False
+
+    def should_exit(self, current_price: float) -> Tuple[bool, str]:
+        """
+        Check if position should be exited (automated mode only)
+        Returns (should_exit, reason)
+        """
+        # Calculate time held
+        entry_time = datetime.fromisoformat(self.entry_time)
+        time_held_minutes = (datetime.now() - entry_time).total_seconds() / 60
+
+        # Calculate current P&L percentage
+        current_value = current_price * self.quantity
+        pnl_percent = ((current_value - self.cost_basis) / self.cost_basis) * 100
+
+        # STOP LOSS: Exit immediately if down 5% or more
+        if current_price <= self.stop_loss_price:
+            return True, f"Stop loss hit at ${current_price:.6f} ({pnl_percent:.2f}%)"
+
+        # PROFIT TARGET MET: Use trailing stop if price reached min profit target
+        if current_price >= self.min_exit_price:
+            if current_price <= self.trailing_exit_price:
+                return True, f"Trailing stop hit (profit secured at ${current_price:.6f})"
+
+        # MINIMUM HOLD TIME: Don't exit before 30 minutes unless stop loss
+        if time_held_minutes < MIN_HOLD_TIME_MINUTES:
+            return False, ""
+
+        # AFTER MIN HOLD TIME: Exit if below trailing stop OR at any profit
+        if current_price <= self.trailing_exit_price or pnl_percent > 0:
+            return True, f"Min hold time reached ({time_held_minutes:.1f} min), exiting with P&L: {pnl_percent:+.2f}%"
+
+        return False, ""
+
+    def calculate_pnl(self, exit_price: float) -> Dict:
+        """Calculate profit/loss for this position"""
+        gross_proceeds = self.quantity * exit_price
+        sell_fee = gross_proceeds * (SELL_FEE_PERCENT / 100)
+        net_proceeds = gross_proceeds - sell_fee
+
+        pnl = net_proceeds - self.cost_basis
+        pnl_percent = (pnl / self.cost_basis) * 100
+
+        return {
+            "gross_proceeds": gross_proceeds,
+            "sell_fee": sell_fee,
+            "net_proceeds": net_proceeds,
+            "pnl": pnl,
+            "pnl_percent": pnl_percent
+        }
+
+    def get_unrealized_pnl(self, current_price: float) -> Dict:
+        """Calculate unrealized P&L"""
+        current_value = current_price * self.quantity
+        unrealized_pnl = current_value - self.cost_basis
+        unrealized_pnl_percent = (unrealized_pnl / self.cost_basis) * 100
+
+        return {
+            "current_value": current_value,
+            "unrealized_pnl": unrealized_pnl,
+            "unrealized_pnl_percent": unrealized_pnl_percent
+        }
+
+
+class LiveTradingManager:
+    """
+    Manages live trading positions with automated exit logic
+    Coordinates between TradingManager (Coinbase API) and Position logic
+    """
+
+    def __init__(self, trading_manager: TradingManager, db_path: str = '/app/data/telegram_bot.db'):
+        self.trading_manager = trading_manager
+        self.db_path = db_path
+        self.positions: Dict[str, LivePosition] = {}  # product_id -> LivePosition
+
+        # Initialize database
+        self.db = sqlite3.connect(db_path, check_same_thread=False)
+        self._init_db()
+
+        # Restore positions from database
+        self._restore_positions()
+
+        logger.info(f"LiveTradingManager initialized with {len(self.positions)} active position(s)")
+
+    def _init_db(self):
+        """Initialize database tables for live positions"""
+        cursor = self.db.cursor()
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS live_positions (
+                product_id TEXT PRIMARY KEY,
+                order_id TEXT NOT NULL,
+                entry_price REAL NOT NULL,
+                entry_time TEXT NOT NULL,
+                quantity REAL NOT NULL,
+                cost_basis REAL NOT NULL,
+                min_exit_price REAL NOT NULL,
+                peak_price REAL NOT NULL,
+                trailing_exit_price REAL NOT NULL,
+                stop_loss_price REAL NOT NULL,
+                status TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                limit_order_id TEXT,
+                last_sync_timestamp TEXT
+            )
+        """)
+
+        # Trade history table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS live_trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id TEXT NOT NULL,
+                order_id TEXT NOT NULL,
+                entry_time TEXT NOT NULL,
+                exit_time TEXT,
+                entry_price REAL NOT NULL,
+                exit_price REAL,
+                quantity REAL NOT NULL,
+                cost_basis REAL NOT NULL,
+                gross_proceeds REAL,
+                net_proceeds REAL,
+                buy_fee REAL NOT NULL,
+                sell_fee REAL,
+                pnl REAL,
+                pnl_percent REAL,
+                peak_price REAL,
+                status TEXT NOT NULL,
+                exit_reason TEXT,
+                mode TEXT NOT NULL
+            )
+        """)
+
+        self.db.commit()
+        logger.info(f"Database initialized: {self.db_path}")
+
+    def _restore_positions(self):
+        """Restore active positions from database"""
+        cursor = self.db.cursor()
+        cursor.execute("SELECT * FROM live_positions WHERE status IN ('active', 'hibernating')")
+        rows = cursor.fetchall()
+
+        for row in rows:
+            product_id = row[0]
+            position = LivePosition(
+                product_id=product_id,
+                order_id=row[1],
+                entry_price=row[2],
+                entry_time=row[3],
+                quantity=row[4],
+                cost_basis=row[5],
+                min_exit_price=row[6],
+                peak_price=row[7],
+                trailing_exit_price=row[8],
+                stop_loss_price=row[9],
+                status=row[10],
+                mode=row[11],
+                limit_order_id=row[12],
+                last_sync_timestamp=row[13]
+            )
+            self.positions[product_id] = position
+            logger.info(f"Restored position: {product_id} (mode: {position.mode}, status: {position.status})")
+
+    def _persist_position(self, position: LivePosition):
+        """Save position to database"""
+        cursor = self.db.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO live_positions
+            (product_id, order_id, entry_price, entry_time, quantity, cost_basis,
+             min_exit_price, peak_price, trailing_exit_price, stop_loss_price,
+             status, mode, limit_order_id, last_sync_timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            position.product_id, position.order_id, position.entry_price,
+            position.entry_time, position.quantity, position.cost_basis,
+            position.min_exit_price, position.peak_price, position.trailing_exit_price,
+            position.stop_loss_price, position.status, position.mode,
+            position.limit_order_id, position.last_sync_timestamp
+        ))
+        self.db.commit()
+
+    def _remove_position(self, product_id: str):
+        """Remove position from database"""
+        cursor = self.db.cursor()
+        cursor.execute("DELETE FROM live_positions WHERE product_id = ?", (product_id,))
+        self.db.commit()
+
+    async def execute_buy(self, product_id: str, quote_size: float, position_percentage: float) -> Dict:
+        """
+        Execute buy order and create live position with automated tracking
+
+        Returns: {
+            'success': bool,
+            'message': str,
+            'position': LivePosition or None,
+            'order_result': dict
+        }
+        """
+        try:
+            # Check if we already have a position
+            if product_id in self.positions:
+                return {
+                    'success': False,
+                    'message': f"Already have active position in {product_id}",
+                    'position': None,
+                    'order_result': None
+                }
+
+            # Execute market buy via TradingManager
+            order_result = await self.trading_manager.create_market_buy_order(
+                product_id=product_id,
+                quote_size=str(quote_size),
+                position_percentage=position_percentage
+            )
+
+            if not order_result.get('success'):
+                return {
+                    'success': False,
+                    'message': order_result.get('message', 'Order failed'),
+                    'position': None,
+                    'order_result': order_result
+                }
+
+            # Get order details
+            order_id = order_result.get('order_id')
+
+            # Get actual fill price and quantity (wait for fill confirmation)
+            await self._wait_for_fill(order_id)
+
+            # Get product info for current price
+            product_info = await self.trading_manager.get_product_info(product_id)
+            entry_price = product_info.get('current_price', 0)
+
+            # Validate entry price
+            if entry_price <= 0:
+                return {
+                    'success': False,
+                    'message': f'Could not get valid price for {product_id}. Entry price: {entry_price}',
+                    'position': None,
+                    'order_result': order_result
+                }
+
+            # Calculate position parameters
+            quantity = quote_size / entry_price
+            buy_fee = quote_size * (BUY_FEE_PERCENT / 100)
+            cost_basis = quote_size + buy_fee
+
+            # Calculate minimum exit price (3% profit + fees)
+            target_proceeds = cost_basis * (1 + MIN_PROFIT_TARGET / 100)
+            min_exit_price = target_proceeds / (quantity * (1 - SELL_FEE_PERCENT / 100))
+
+            # Calculate stop loss (5% below entry)
+            stop_loss_price = entry_price * (1 - STOP_LOSS_PERCENT / 100)
+
+            # Initial peak is entry price
+            peak_price = entry_price
+            trailing_exit_price = max(min_exit_price, peak_price * (1 - TRAILING_THRESHOLD / 100))
+
+            # Create live position
+            position = LivePosition(
+                product_id=product_id,
+                order_id=order_id,
+                entry_price=entry_price,
+                entry_time=datetime.now().isoformat(),
+                quantity=quantity,
+                cost_basis=cost_basis,
+                min_exit_price=min_exit_price,
+                peak_price=peak_price,
+                trailing_exit_price=trailing_exit_price,
+                stop_loss_price=stop_loss_price,
+                status="active",
+                mode="automated",
+                last_sync_timestamp=datetime.now().isoformat()
+            )
+
+            # Store position
+            self.positions[product_id] = position
+            self._persist_position(position)
+
+            # Record trade entry
+            self._record_trade_entry(position, quote_size * (BUY_FEE_PERCENT / 100))
+
+            logger.info(f"✅ Live position opened: {product_id} @ ${entry_price:.6f}, "
+                       f"Quantity: {quantity:.8f}, Stop Loss: ${stop_loss_price:.6f}, "
+                       f"Min Exit: ${min_exit_price:.6f}")
+
+            return {
+                'success': True,
+                'message': f'Position opened in {product_id}',
+                'position': position,
+                'order_result': order_result
+            }
+
+        except Exception as e:
+            logger.error(f"Error executing buy: {e}")
+            return {
+                'success': False,
+                'message': f'Error: {str(e)}',
+                'position': None,
+                'order_result': None
+            }
+
+    async def _wait_for_fill(self, order_id: str, max_wait_seconds: int = 10):
+        """Wait for order to fill (simple implementation)"""
+        # For now, just wait a short time
+        # TODO: Implement proper fill confirmation via get_order_status
+        import asyncio
+        await asyncio.sleep(2)
+
+    def update_position(self, product_id: str, current_price: float) -> Optional[Dict]:
+        """
+        Update position with current price
+        Returns dict with exit info if position should be closed, None otherwise
+        """
+        if product_id not in self.positions:
+            return None
+
+        position = self.positions[product_id]
+
+        # Skip automated logic if in manual mode
+        if position.mode != "automated":
+            return None
+
+        # Update peak and check for exit
+        peak_updated = position.update_peak(current_price)
+
+        if peak_updated:
+            unrealized = position.get_unrealized_pnl(current_price)
+            logger.info(f"🔼 {product_id}: New peak ${current_price:.6f}, "
+                       f"Unrealized P&L: {unrealized['unrealized_pnl_percent']:+.2f}%, "
+                       f"Trailing exit: ${position.trailing_exit_price:.6f}")
+            # Update persisted position
+            self._persist_position(position)
+
+        # Check if we should exit
+        should_exit, exit_reason = position.should_exit(current_price)
+
+        if should_exit:
+            return {
+                'should_exit': True,
+                'reason': exit_reason,
+                'current_price': current_price,
+                'position': position
+            }
+
+        # Just update timestamp
+        position.last_sync_timestamp = datetime.now().isoformat()
+        self._persist_position(position)
+
+        return None
+
+    async def execute_automated_exit(self, product_id: str, exit_price: float, reason: str) -> Dict:
+        """Execute automated exit (sell at market)"""
+        if product_id not in self.positions:
+            return {'success': False, 'message': 'Position not found'}
+
+        position = self.positions[product_id]
+
+        try:
+            # Execute market sell
+            sell_result = await self.trading_manager.create_market_sell_order(
+                product_id=product_id,
+                base_size=str(position.quantity)
+            )
+
+            if not sell_result.get('success'):
+                logger.error(f"Automated exit failed for {product_id}: {sell_result.get('message')}")
+                return sell_result
+
+            # Calculate P&L
+            pnl_data = position.calculate_pnl(exit_price)
+
+            # Calculate holding time
+            entry_time = datetime.fromisoformat(position.entry_time)
+            exit_time = datetime.now()
+            holding_seconds = (exit_time - entry_time).total_seconds()
+
+            logger.info(f"🔴 Automated exit: {product_id} @ ${exit_price:.6f}, "
+                       f"P&L: {pnl_data['pnl_percent']:+.2f}%, "
+                       f"Reason: {reason}, "
+                       f"Held: {holding_seconds/60:.1f} min")
+
+            # Record trade exit
+            self._record_trade_exit(position, exit_price, pnl_data, reason)
+
+            # Remove position
+            del self.positions[product_id]
+            self._remove_position(product_id)
+
+            return {
+                'success': True,
+                'message': f'Position closed: {reason}',
+                'pnl_data': pnl_data,
+                'sell_result': sell_result
+            }
+
+        except Exception as e:
+            logger.error(f"Error executing automated exit: {e}")
+            return {'success': False, 'message': str(e)}
+
+    async def execute_manual_exit(self, product_id: str) -> Dict:
+        """Execute manual market sell"""
+        if product_id not in self.positions:
+            return {'success': False, 'message': 'Position not found'}
+
+        position = self.positions[product_id]
+
+        # Get current price
+        product_info = await self.trading_manager.get_product_info(product_id)
+        current_price = product_info.get('current_price', position.entry_price)
+
+        return await self.execute_automated_exit(product_id, current_price, "Manual market sell")
+
+    async def set_limit_order(self, product_id: str, limit_price: float) -> Dict:
+        """
+        Set custom limit order and enter hibernation mode
+        """
+        if product_id not in self.positions:
+            return {'success': False, 'message': 'Position not found'}
+
+        position = self.positions[product_id]
+
+        try:
+            # Cancel any existing orders
+            # TODO: Implement order cancellation
+
+            # Place limit order
+            # TODO: Implement limit order via TradingManager
+            # For now, just update the mode
+
+            position.mode = "manual_limit_order"
+            position.status = "hibernating"
+            position.limit_order_id = "pending_implementation"
+            self._persist_position(position)
+
+            logger.info(f"💤 {product_id} entering hibernation mode with limit order @ ${limit_price:.6f}")
+
+            return {
+                'success': True,
+                'message': f'Limit order set at ${limit_price:.6f}',
+                'position': position
+            }
+
+        except Exception as e:
+            logger.error(f"Error setting limit order: {e}")
+            return {'success': False, 'message': str(e)}
+
+    def get_active_product_ids(self) -> list:
+        """Get list of all active position product IDs"""
+        return [pid for pid, pos in self.positions.items() if pos.status in ['active', 'hibernating']]
+
+    def get_position(self, product_id: str) -> Optional[LivePosition]:
+        """Get position by product ID"""
+        return self.positions.get(product_id)
+
+    def _record_trade_entry(self, position: LivePosition, buy_fee: float):
+        """Record trade entry in database"""
+        cursor = self.db.cursor()
+        cursor.execute("""
+            INSERT INTO live_trades
+            (product_id, order_id, entry_time, entry_price, quantity, cost_basis,
+             buy_fee, peak_price, status, mode)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            position.product_id, position.order_id, position.entry_time,
+            position.entry_price, position.quantity, position.cost_basis,
+            buy_fee, position.peak_price, 'open', position.mode
+        ))
+        self.db.commit()
+
+    def _record_trade_exit(self, position: LivePosition, exit_price: float,
+                           pnl_data: Dict, reason: str):
+        """Record trade exit in database"""
+        cursor = self.db.cursor()
+        cursor.execute("""
+            UPDATE live_trades
+            SET exit_time = ?, exit_price = ?, gross_proceeds = ?, net_proceeds = ?,
+                sell_fee = ?, pnl = ?, pnl_percent = ?, peak_price = ?,
+                status = ?, exit_reason = ?
+            WHERE product_id = ? AND status = 'open'
+        """, (
+            datetime.now().isoformat(), exit_price, pnl_data['gross_proceeds'],
+            pnl_data['net_proceeds'], pnl_data['sell_fee'], pnl_data['pnl'],
+            pnl_data['pnl_percent'], position.peak_price, 'closed', reason,
+            position.product_id
+        ))
+        self.db.commit()

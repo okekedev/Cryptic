@@ -527,7 +527,7 @@ class PriceSpikeBot:
                 self.connection_errors += 1
                 logger.error(f"Failed to emit direct alert to Telegram: {e}")
 
-        # ALWAYS send to backend relay for other consumers (paper-trading bot, etc.)
+        # Emit to backend for paper trading bot
         if hasattr(self, 'backend_sio') and self.backend_sio and self.backend_sio.connected:
             try:
                 self.backend_sio.emit('spike_alert', spike_data)

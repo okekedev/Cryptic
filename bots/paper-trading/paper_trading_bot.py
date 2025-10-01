@@ -14,14 +14,14 @@ import logging
 import signal
 import sqlite3
 import socketio
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Optional
 from dataclasses import dataclass, asdict
 
 # Configuration
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:5000")
 INITIAL_CAPITAL = float(os.getenv("INITIAL_CAPITAL", "10000.0"))  # $10,000 starting capital
-POSITION_SIZE_PERCENT = float(os.getenv("POSITION_SIZE_PERCENT", "10.0"))  # 10% per trade
+POSITION_SIZE_PERCENT = float(os.getenv("POSITION_SIZE_PERCENT", "10.0"))  # 10% per trade (1st buy)
 MIN_PROFIT_TARGET = float(os.getenv("MIN_PROFIT_TARGET", "3.0"))  # 3% minimum profit
 TRAILING_THRESHOLD = float(os.getenv("TRAILING_THRESHOLD", "1.5"))  # Drop 1.5% from peak to exit
 MIN_HOLD_TIME_MINUTES = float(os.getenv("MIN_HOLD_TIME_MINUTES", "30.0"))  # Minimum 30 min hold time
@@ -30,6 +30,13 @@ BUY_FEE_PERCENT = float(os.getenv("BUY_FEE_PERCENT", "0.6"))  # Coinbase Advance
 SELL_FEE_PERCENT = float(os.getenv("SELL_FEE_PERCENT", "0.4"))  # Coinbase Advanced Trade maker fee
 DB_PATH = os.getenv("DB_PATH", "/app/data/paper_trading.db")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+# Phase 1 Enhancements: Dynamic Position Sizing & Volume Detection
+MAX_POSITIONS_PER_ASSET = int(os.getenv("MAX_POSITIONS_PER_ASSET", "3"))  # Max 3 buys per asset in 24h
+POSITION_SIZE_DECAY = [10.0, 7.0, 5.0]  # 10%, 7%, 5% for 1st, 2nd, 3rd buys
+VOLUME_EXHAUSTION_THRESHOLD = float(os.getenv("VOLUME_EXHAUSTION_THRESHOLD", "0.3"))  # 70% volume drop
+EMERGENCY_EXIT_PERCENT = float(os.getenv("EMERGENCY_EXIT_PERCENT", "3.0"))  # -3% emergency exit
+MIN_HOLD_FOR_VOLUME_EXIT = float(os.getenv("MIN_HOLD_FOR_VOLUME_EXIT", "10.0"))  # 10 min before volume exit
 
 # Configure logging
 logging.basicConfig(
@@ -106,7 +113,7 @@ class Position:
             return True
         return False
 
-    def should_exit(self, current_price: float) -> tuple[bool, str]:
+    def should_exit(self, current_price: float, current_volume: float = 0, avg_volume: float = 0) -> tuple[bool, str]:
         """
         Check if position should be exited. Returns (should_exit, reason)
 
@@ -178,12 +185,24 @@ class Position:
         if pnl_percent <= -STOP_LOSS_PERCENT:
             return True, f"Stop loss hit ({pnl_percent:.2f}%)"
 
+        # EMERGENCY DUMP EXIT: Override min hold if losing 3%+ AND volume collapsed
+        if pnl_percent <= -EMERGENCY_EXIT_PERCENT and avg_volume > 0:
+            volume_exhausted = current_volume < (avg_volume * VOLUME_EXHAUSTION_THRESHOLD)
+            if volume_exhausted:
+                return True, f"Emergency dump exit ({pnl_percent:.2f}%, volume collapsed)"
+
+        # VOLUME EXHAUSTION EXIT: Early profit-taking if volume dies
+        if pnl_percent > MIN_PROFIT_TARGET and avg_volume > 0 and time_held_minutes >= MIN_HOLD_FOR_VOLUME_EXIT:
+            volume_exhausted = current_volume < (avg_volume * VOLUME_EXHAUSTION_THRESHOLD)
+            if volume_exhausted:
+                return True, f"Volume exhaustion - profit secured early ({pnl_percent:.2f}%)"
+
         # PROFIT TARGET MET: Use trailing stop if price reached min profit target
         if current_price >= self.min_exit_price:
             if current_price <= self.trailing_exit_price:
                 return True, f"Trailing stop hit (profit secured)"
 
-        # MINIMUM HOLD TIME: Don't exit before 30 minutes unless stop loss
+        # MINIMUM HOLD TIME: Don't exit before 30 minutes unless stop loss or emergency
         if time_held_minutes < MIN_HOLD_TIME_MINUTES:
             return False, ""
 
@@ -217,6 +236,7 @@ class PaperTradingBot:
     def __init__(self):
         self.capital = INITIAL_CAPITAL
         self.positions: Dict[str, Position] = {}  # symbol -> Position
+        self.buy_history: Dict[str, list] = {}  # symbol -> [timestamps]
         self.sio = None
         self.running = True
 
@@ -227,11 +247,14 @@ class PaperTradingBot:
         logger.info("=" * 60)
         logger.info("Paper Trading Bot Initialized")
         logger.info(f"Initial Capital: ${INITIAL_CAPITAL:,.2f}")
-        logger.info(f"Position Size: {POSITION_SIZE_PERCENT}% per trade")
+        logger.info(f"Position Size: {POSITION_SIZE_PERCENT}% per trade (1st buy)")
+        logger.info(f"Position Size Decay: {POSITION_SIZE_DECAY[0]}% → {POSITION_SIZE_DECAY[1]}% → {POSITION_SIZE_DECAY[2]}%")
+        logger.info(f"Max Positions Per Asset: {MAX_POSITIONS_PER_ASSET} in 24h")
         logger.info(f"Min Profit Target: {MIN_PROFIT_TARGET}%")
         logger.info(f"Trailing Threshold: {TRAILING_THRESHOLD}%")
         logger.info(f"Min Hold Time: {MIN_HOLD_TIME_MINUTES} minutes")
         logger.info(f"Stop Loss: {STOP_LOSS_PERCENT}%")
+        logger.info(f"Volume Exhaustion Threshold: {VOLUME_EXHAUSTION_THRESHOLD * 100}% of avg")
         logger.info(f"Buy Fee: {BUY_FEE_PERCENT}%")
         logger.info(f"Sell Fee: {SELL_FEE_PERCENT}%")
         logger.info("=" * 60)
@@ -313,11 +336,49 @@ class PaperTradingBot:
             )
         """)
 
+        # Buy history table (Phase 1: Dynamic position sizing)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS buy_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                buy_timestamp TEXT NOT NULL,
+                position_size_percent REAL NOT NULL,
+                buy_count INTEGER NOT NULL
+            )
+        """)
+
         self.db.commit()
         logger.info(f"Database initialized: {DB_PATH}")
 
-        # Restore open positions from database
+        # Restore buy history and open positions from database
+        self._restore_buy_history()
         self._restore_positions()
+
+    def _restore_buy_history(self):
+        """Restore buy history from database (last 24 hours)"""
+        cursor = self.db.cursor()
+        cutoff = (datetime.now() - timedelta(hours=24)).isoformat()
+        cursor.execute("""
+            SELECT symbol, buy_timestamp
+            FROM buy_history
+            WHERE buy_timestamp > ?
+            ORDER BY buy_timestamp ASC
+        """, (cutoff,))
+        rows = cursor.fetchall()
+
+        for symbol, timestamp in rows:
+            if symbol not in self.buy_history:
+                self.buy_history[symbol] = []
+            self.buy_history[symbol].append(datetime.fromisoformat(timestamp))
+
+        if rows:
+            logger.info(f"📊 Restored buy history: {len(rows)} buys across {len(self.buy_history)} asset(s)")
+            for symbol, timestamps in self.buy_history.items():
+                logger.info(f"   {symbol}: {len(timestamps)} buy(s) in last 24h")
+
+        # Clean up old buy history (>24 hours)
+        cursor.execute("DELETE FROM buy_history WHERE buy_timestamp <= ?", (cutoff,))
+        self.db.commit()
 
     def _restore_positions(self):
         """Restore open positions from database after restart"""
@@ -391,15 +452,64 @@ class PaperTradingBot:
         cursor.execute("DELETE FROM open_positions WHERE symbol = ?", (symbol,))
         self.db.commit()
 
+    def _get_position_size_for_asset(self, symbol: str) -> tuple[float, int]:
+        """
+        Get dynamic position size based on buy count in last 24 hours.
+        Returns (position_size_percent, buy_count)
+        """
+        # Clean up old buy history (>24 hours)
+        cutoff = datetime.now() - timedelta(hours=24)
+        if symbol in self.buy_history:
+            self.buy_history[symbol] = [t for t in self.buy_history[symbol] if t > cutoff]
+            if not self.buy_history[symbol]:
+                del self.buy_history[symbol]
+
+        # Count recent buys for this asset
+        buy_count = len(self.buy_history.get(symbol, []))
+
+        # Check if we've hit max positions for this asset
+        if buy_count >= MAX_POSITIONS_PER_ASSET:
+            logger.warning(f"⛔ {symbol}: Max {MAX_POSITIONS_PER_ASSET} positions reached in 24h - skipping")
+            return 0.0, buy_count
+
+        # Get tiered position size
+        position_size = POSITION_SIZE_DECAY[buy_count]
+
+        logger.info(f"📊 {symbol}: Buy #{buy_count + 1} - using {position_size}% position size")
+
+        return position_size, buy_count
+
+    def _record_buy_in_history(self, symbol: str, position_size: float, buy_count: int):
+        """Record buy in history (both in-memory and database)"""
+        now = datetime.now()
+
+        # In-memory tracking
+        if symbol not in self.buy_history:
+            self.buy_history[symbol] = []
+        self.buy_history[symbol].append(now)
+
+        # Database persistence
+        cursor = self.db.cursor()
+        cursor.execute("""
+            INSERT INTO buy_history (symbol, buy_timestamp, position_size_percent, buy_count)
+            VALUES (?, ?, ?, ?)
+        """, (symbol, now.isoformat(), position_size, buy_count + 1))
+        self.db.commit()
+
     def open_position(self, symbol: str, entry_price: float, spike_pct: float):
-        """Open a new paper trading position"""
+        """Open a new paper trading position with dynamic sizing"""
         # Check if we already have a position in this symbol
         if symbol in self.positions:
             logger.info(f"⏭️  Already have position in {symbol}, skipping")
             return
 
-        # Calculate position size
-        position_value = self.capital * (POSITION_SIZE_PERCENT / 100)
+        # Get dynamic position size based on buy count
+        position_size_percent, buy_count = self._get_position_size_for_asset(symbol)
+        if position_size_percent == 0:
+            return  # Max positions reached for this asset
+
+        # Calculate position value
+        position_value = self.capital * (position_size_percent / 100)
 
         if position_value > self.capital:
             logger.warning(f"⚠️  Insufficient capital for {symbol}")
@@ -439,6 +549,7 @@ class PaperTradingBot:
 
         logger.info("=" * 60)
         logger.info(f"🟢 OPENED POSITION: {symbol}")
+        logger.info(f"   Position Size: {position_size_percent}% (Buy #{buy_count + 1})")
         logger.info(f"   Entry Price: ${entry_price:.6f}")
         logger.info(f"   Quantity: {quantity:.4f}")
         logger.info(f"   Cost Basis: ${cost_basis:.2f} (including ${buy_fee:.2f} fee)")
@@ -448,14 +559,17 @@ class PaperTradingBot:
         logger.info(f"   Spike %: {spike_pct:.2f}%")
         logger.info("=" * 60)
 
+        # Record buy in history
+        self._record_buy_in_history(symbol, position_size_percent, buy_count)
+
         # Persist to database
         self._persist_position(position, spike_pct)
 
         # Record in database
         self._record_trade_entry(position, spike_pct)
 
-    def update_position(self, symbol: str, current_price: float):
-        """Update position with new price data"""
+    def update_position(self, symbol: str, current_price: float, current_volume: float = 0, avg_volume: float = 0):
+        """Update position with new price data and volume"""
         if symbol not in self.positions:
             return
 
@@ -466,14 +580,18 @@ class PaperTradingBot:
 
         if peak_updated:
             unrealized = position.calculate_pnl(current_price)
+            volume_status = ""
+            if avg_volume > 0:
+                volume_pct = (current_volume / avg_volume) * 100
+                volume_status = f", Volume: {volume_pct:.0f}% of avg"
             logger.info(f"🔼 {symbol}: New peak ${current_price:.6f}, "
-                       f"Unrealized P&L: {unrealized['pnl_percent']:+.2f}%, "
+                       f"Unrealized P&L: {unrealized['pnl_percent']:+.2f}%{volume_status}, "
                        f"Trailing exit now at ${position.trailing_exit_price:.6f}")
             # Update persisted position with new peak
             self._persist_position(position)
 
-        # Check if we should exit
-        should_exit, exit_reason = position.should_exit(current_price)
+        # Check if we should exit (with volume data)
+        should_exit, exit_reason = position.should_exit(current_price, current_volume, avg_volume)
         if should_exit:
             self.close_position(symbol, current_price, exit_reason)
 
@@ -688,9 +806,13 @@ class PaperTradingBot:
                 symbol = data['crypto']
                 price = data['price']
 
-                # Update any open positions
+                # Extract volume data if available (Phase 1 enhancement)
+                current_volume = data.get('volume_24h', 0)
+                avg_volume = data.get('avg_volume', 0)
+
+                # Update any open positions (with volume data)
                 if symbol in self.positions:
-                    self.update_position(symbol, price)
+                    self.update_position(symbol, price, current_volume, avg_volume)
             except Exception as e:
                 logger.error(f"Error processing ticker update: {e}")
 
