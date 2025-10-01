@@ -601,11 +601,11 @@ class DumpTradingBot:
                     # Check volume surge (if available)
                     volume_surge = data.get('volume_surge', 1.0)
 
-                    # Only enter if volume surged (confirmation of activity)
-                    if volume_surge < VOLUME_SURGE_THRESHOLD:
-                        logger.info(f"⏭️  {symbol}: Volume surge {volume_surge:.2f}x below threshold "
-                                   f"({VOLUME_SURGE_THRESHOLD}x) - skipping")
-                        return
+                    # DISABLED: Volume surge threshold filter (testing performance without filter)
+                    # if volume_surge < VOLUME_SURGE_THRESHOLD:
+                    #     logger.info(f"⏭️  {symbol}: Volume surge {volume_surge:.2f}x below threshold "
+                    #                f"({VOLUME_SURGE_THRESHOLD}x) - skipping")
+                    #     return
 
                     logger.info(f"📢 DUMP ALERT: {symbol} {dump_pct:.2f}% (volume: {volume_surge:.2f}x)")
                     self.open_position(symbol, entry_price, dump_pct, volume_surge)

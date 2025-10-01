@@ -560,7 +560,24 @@ class LiveTradingManager:
                 logger.error(f"Automated exit failed for {product_id}: {sell_result.get('message')}")
                 return sell_result
 
-            # Calculate P&L
+            # Get actual fill price from the order
+            order_id = sell_result.get('order_id')
+            if order_id:
+                # Wait briefly for order to fill
+                import asyncio
+                await asyncio.sleep(1)
+
+                # Get fill details
+                fill_result = await self.trading_manager.get_order_fills(order_id)
+
+                if fill_result.get('success'):
+                    actual_exit_price = fill_result.get('average_fill_price')
+                    logger.info(f"📊 Actual fill price: ${actual_exit_price:.6f} (estimated: ${exit_price:.6f})")
+                    exit_price = actual_exit_price
+                else:
+                    logger.warning(f"Could not get fill price, using estimated: ${exit_price:.6f}")
+
+            # Calculate P&L with actual exit price
             pnl_data = position.calculate_pnl(exit_price)
 
             # Calculate holding time
@@ -584,7 +601,8 @@ class LiveTradingManager:
                 'success': True,
                 'message': f'Position closed: {reason}',
                 'pnl_data': pnl_data,
-                'sell_result': sell_result
+                'sell_result': sell_result,
+                'actual_exit_price': exit_price
             }
 
         except Exception as e:

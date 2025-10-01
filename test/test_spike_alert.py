@@ -10,6 +10,25 @@ from datetime import datetime
 load_dotenv()
 
 BACKEND_URL = "http://localhost:5000"
+TELEGRAM_BOT_WEBHOOK = "http://localhost:8080/webhook"
+
+def trigger_spike_alert_via_webhook():
+    """Send spike alert directly to Telegram bot via webhook"""
+    spike_data = {
+        'symbol': 'BTC-USD',
+        'spike_type': 'pump',
+        'pct_change': 5.25,
+        'old_price': 60000.0,
+        'new_price': 63150.0,
+        'time_span_seconds': 300,
+        'timestamp': datetime.now().isoformat(),
+        'spike_time': datetime.now().isoformat(),
+        'event_type': 'spike_start'
+    }
+
+    print(f"Sending spike alert via webhook: {spike_data}")
+    response = requests.post(TELEGRAM_BOT_WEBHOOK, json=spike_data)
+    print(f"Response: {response.status_code} - {response.text}")
 
 def trigger_spike_alert_via_socketio():
     """Emit a spike alert via Socket.IO to backend"""
@@ -24,12 +43,12 @@ def trigger_spike_alert_via_socketio():
 
         # Emit a spike alert
         spike_data = {
-            'symbol': 'TEST-USD',
+            'symbol': 'BTC-USD',
             'spike_type': 'pump',
-            'pct_change': 8.75,
-            'old_price': 100.0,
-            'new_price': 108.75,
-            'time_span_seconds': 240,
+            'pct_change': 5.25,
+            'old_price': 60000.0,
+            'new_price': 63150.0,
+            'time_span_seconds': 300,
             'timestamp': datetime.now().isoformat(),
             'spike_time': datetime.now().isoformat(),
             'event_type': 'spike_start'
@@ -55,5 +74,5 @@ def trigger_spike_alert_via_socketio():
         print(f"Error: {e}")
 
 if __name__ == '__main__':
-    print("Triggering spike alert via Socket.IO...")
-    trigger_spike_alert_via_socketio()
+    print("Triggering spike alert via webhook...")
+    trigger_spike_alert_via_webhook()
