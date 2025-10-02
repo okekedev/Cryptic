@@ -25,7 +25,7 @@ POSITION_SIZE_PERCENT = float(os.getenv("POSITION_SIZE_PERCENT", "10.0"))  # 10%
 MIN_PROFIT_TARGET = float(os.getenv("MIN_PROFIT_TARGET", "3.0"))  # 3% minimum profit
 TRAILING_THRESHOLD = float(os.getenv("TRAILING_THRESHOLD", "1.5"))  # Drop 1.5% from peak to exit
 MIN_HOLD_TIME_MINUTES = float(os.getenv("MIN_HOLD_TIME_MINUTES", "30.0"))  # Minimum 30 min hold time
-STOP_LOSS_PERCENT = float(os.getenv("STOP_LOSS_PERCENT", "5.0"))  # 5% stop loss
+STOP_LOSS_PERCENT = float(os.getenv("STOP_LOSS_PERCENT", "2.0"))  # 2% stop loss (protective)
 BUY_FEE_PERCENT = float(os.getenv("BUY_FEE_PERCENT", "0.6"))  # Coinbase Advanced Trade taker fee
 SELL_FEE_PERCENT = float(os.getenv("SELL_FEE_PERCENT", "0.4"))  # Coinbase Advanced Trade maker fee
 DB_PATH = os.getenv("DB_PATH", "/app/data/paper_trading.db")
@@ -100,6 +100,8 @@ class Position:
     min_exit_price: float  # Minimum price to exit (3% + fees)
     peak_price: float  # Highest price seen
     trailing_exit_price: float  # Current trailing stop
+    stop_loss_price: float  # Hard stop loss (-2%)
+    stop_loss_order_active: bool = True  # Simulates Coinbase stop-loss order
     status: str = "open"  # open, closed
 
     def update_peak(self, current_price: float) -> bool:
@@ -181,9 +183,10 @@ class Position:
         #     if current_price < self.ath_tight_stop:
         #         return True, f"ATH tight stop hit at ${current_price:.6f}"
 
-        # STOP LOSS: Exit immediately if down 5% or more
-        if pnl_percent <= -STOP_LOSS_PERCENT:
-            return True, f"Stop loss hit ({pnl_percent:.2f}%)"
+        # STOP LOSS ORDER CHECK: Simulates Coinbase stop-loss order at -2%
+        # This would execute automatically on exchange regardless of bot status
+        if self.stop_loss_order_active and current_price <= self.stop_loss_price:
+            return True, f"Stop-loss order triggered at ${current_price:.6f} ({pnl_percent:.2f}%)"
 
         # EMERGENCY DUMP EXIT: Override min hold if losing 3%+ AND volume collapsed
         if pnl_percent <= -EMERGENCY_EXIT_PERCENT and avg_volume > 0:
@@ -197,8 +200,13 @@ class Position:
             if volume_exhausted:
                 return True, f"Volume exhaustion - profit secured early ({pnl_percent:.2f}%)"
 
-        # PROFIT TARGET MET: Use trailing stop if price reached min profit target
+        # PROFIT TARGET MET: Cancel stop-loss order and use trailing stop
         if current_price >= self.min_exit_price:
+            # Cancel the stop-loss order when profit target reached (simulates real behavior)
+            if self.stop_loss_order_active:
+                self.stop_loss_order_active = False
+                logger.info(f"📤 Simulated: Stop-loss order CANCELLED for {self.symbol} (profit target ${self.min_exit_price:.6f} reached)")
+
             if current_price <= self.trailing_exit_price:
                 return True, f"Trailing stop hit (profit secured)"
 
@@ -394,6 +402,9 @@ class PaperTradingBot:
         for row in rows:
             symbol, entry_price, entry_time, quantity, cost_basis, min_exit_price, peak_price, trailing_exit_price, status, spike_pct = row
 
+            # Calculate stop loss price if not stored (for backward compatibility)
+            stop_loss_price = entry_price * (1 - STOP_LOSS_PERCENT / 100)
+
             position = Position(
                 symbol=symbol,
                 entry_price=entry_price,
@@ -403,6 +414,8 @@ class PaperTradingBot:
                 min_exit_price=min_exit_price,
                 peak_price=peak_price,
                 trailing_exit_price=trailing_exit_price,
+                stop_loss_price=stop_loss_price,
+                stop_loss_order_active=True,  # Assume order still active on restore
                 status=status
             )
 
@@ -531,6 +544,9 @@ class PaperTradingBot:
         peak_price = entry_price
         trailing_exit_price = max(min_exit_price, peak_price * (1 - TRAILING_THRESHOLD / 100))
 
+        # Calculate stop loss price (-2% from entry)
+        stop_loss_price = entry_price * (1 - STOP_LOSS_PERCENT / 100)
+
         # Create position
         position = Position(
             symbol=symbol,
@@ -541,8 +557,13 @@ class PaperTradingBot:
             min_exit_price=min_exit_price,
             peak_price=peak_price,
             trailing_exit_price=trailing_exit_price,
+            stop_loss_price=stop_loss_price,
+            stop_loss_order_active=True,  # Simulates Coinbase stop-loss order
             status="open"
         )
+
+        # Log the simulated stop-loss order placement
+        logger.info(f"📥 Simulated: Stop-loss order PLACED for {symbol} at ${stop_loss_price:.6f} (-{STOP_LOSS_PERCENT}%)")
 
         self.positions[symbol] = position
         self.capital -= cost_basis

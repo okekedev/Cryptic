@@ -801,18 +801,38 @@ class TradingManager:
             # Extract fill info from order
             filled_size = float(order.get('filled_size', 0))
             filled_value = float(order.get('filled_value', 0))
+            total_fees = float(order.get('total_fees', 0))
+            side = order.get('side', 'UNKNOWN')
+
+            # Extract timing data from Coinbase
+            created_time = order.get('created_time')  # When order was placed
+            completion_time = order.get('completion_time')  # When order filled
+            order_status = order.get('status', 'UNKNOWN')
 
             if filled_size == 0:
                 return {'success': False, 'error': 'No filled size'}
 
+            # Calculate average fill price from filled_value
             average_price = filled_value / filled_size
 
-            logger.info(f"Order {order_id}: Filled {filled_size:.8f} @ avg ${average_price:.6f}")
+            # For BUY orders: filled_value is total USD spent (quote currency)
+            # For SELL orders: filled_value is total USD received (quote currency)
+            # total_fees is the fee charged by Coinbase
+
+            logger.info(f"Order {order_id} ({side}): Filled {filled_size:.8f} @ avg ${average_price:.6f}, Fees: ${total_fees:.2f}")
+            if created_time and completion_time:
+                logger.info(f"  Timing: Created {created_time} → Filled {completion_time}")
 
             return {
                 'success': True,
                 'average_fill_price': average_price,
-                'filled_size': filled_size
+                'filled_size': filled_size,
+                'filled_value': filled_value,
+                'total_fees': total_fees,
+                'side': side,
+                'created_time': created_time,
+                'completion_time': completion_time,
+                'status': order_status
             }
 
         except Exception as e:

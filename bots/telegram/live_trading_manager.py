@@ -44,6 +44,14 @@ class LivePosition:
     limit_order_id: Optional[str] = None  # If in manual mode
     last_sync_timestamp: str = None  # Last API sync time
 
+    # Performance timing metrics (ISO format timestamps)
+    buy_button_pressed_time: str = None  # When user clicked buy button
+    buy_order_created_time: str = None  # When Coinbase created the order
+    buy_order_filled_time: str = None  # When Coinbase filled the order
+    sell_button_pressed_time: str = None  # When sell was initiated
+    sell_order_created_time: str = None  # When Coinbase created sell order
+    sell_order_filled_time: str = None  # When Coinbase filled sell order
+
     def update_peak(self, current_price: float) -> bool:
         """Update peak and trailing exit. Returns True if peak was updated."""
         if current_price > self.peak_price:
@@ -87,11 +95,33 @@ class LivePosition:
 
         return False, ""
 
-    def calculate_pnl(self, exit_price: float) -> Dict:
-        """Calculate profit/loss for this position"""
-        gross_proceeds = self.quantity * exit_price
-        sell_fee = gross_proceeds * (SELL_FEE_PERCENT / 100)
-        net_proceeds = gross_proceeds - sell_fee
+    def calculate_pnl(self, exit_price: float = None, sell_fill_data: Dict = None) -> Dict:
+        """
+        Calculate profit/loss for this position
+
+        Args:
+            exit_price: Exit price (used if sell_fill_data not available)
+            sell_fill_data: Actual fill data from Coinbase sell order (preferred)
+        """
+        if sell_fill_data and sell_fill_data.get('success'):
+            # Use actual Coinbase order data
+            filled_value = sell_fill_data.get('filled_value', 0)
+            sell_fee = sell_fill_data.get('total_fees', 0)
+            filled_size = sell_fill_data.get('filled_size', self.quantity)
+
+            # For sell orders, filled_value is what we received
+            gross_proceeds = filled_value
+            net_proceeds = filled_value - sell_fee
+
+            # Calculate actual exit price from fill data
+            actual_exit_price = filled_value / filled_size if filled_size > 0 else exit_price
+
+        else:
+            # Fallback: estimate using exit price and fee percentage
+            gross_proceeds = self.quantity * exit_price
+            sell_fee = gross_proceeds * (SELL_FEE_PERCENT / 100)
+            net_proceeds = gross_proceeds - sell_fee
+            actual_exit_price = exit_price
 
         pnl = net_proceeds - self.cost_basis
         pnl_percent = (pnl / self.cost_basis) * 100
@@ -101,7 +131,8 @@ class LivePosition:
             "sell_fee": sell_fee,
             "net_proceeds": net_proceeds,
             "pnl": pnl,
-            "pnl_percent": pnl_percent
+            "pnl_percent": pnl_percent,
+            "exit_price": actual_exit_price
         }
 
     def get_unrealized_pnl(self, current_price: float) -> Dict:
@@ -245,9 +276,15 @@ class LiveTradingManager:
         cursor.execute("DELETE FROM live_positions WHERE product_id = ?", (product_id,))
         self.db.commit()
 
-    async def execute_buy(self, product_id: str, quote_size: float, position_percentage: float) -> Dict:
+    async def execute_buy(self, product_id: str, quote_size: float, position_percentage: float, button_press_time: str = None) -> Dict:
         """
         Execute buy order and create live position with automated tracking
+
+        Args:
+            product_id: Trading pair (e.g., BTC-USD)
+            quote_size: Amount in USD to spend
+            position_percentage: Position size as percentage
+            button_press_time: ISO timestamp when user pressed buy button
 
         Returns: {
             'success': bool,
@@ -258,6 +295,10 @@ class LiveTradingManager:
         """
         # Round quote_size to 2 decimal places for Coinbase precision requirements
         quote_size = round(quote_size, 2)
+
+        # Use provided button_press_time or capture now
+        if button_press_time is None:
+            button_press_time = datetime.now().isoformat()
 
         print(f"\n{'='*60}")
         print(f"🔵 EXECUTE_BUY CALLED")
@@ -347,12 +388,18 @@ class LiveTradingManager:
             # Get fill details from order
             fill_details = await self.trading_manager.get_order_fills(order_id)
 
+            # Extract timing data from Coinbase
+            buy_order_created_time = None
+            buy_order_filled_time = None
+
             if not fill_details.get('success'):
-                # Fallback: try to get price from ticker
+                # Fallback: try to get price from ticker and estimate fees
                 logger.warning(f"Could not get fills for {order_id}, trying ticker price as fallback")
                 product_info = await self.trading_manager.get_product_info(product_id)
                 entry_price = product_info.get('current_price', 0)
                 quantity = quote_size / entry_price if entry_price > 0 else 0
+                buy_fee = quote_size * (BUY_FEE_PERCENT / 100)
+                cost_basis = quote_size + buy_fee
 
                 if entry_price <= 0 or quantity <= 0:
                     return {
@@ -362,16 +409,32 @@ class LiveTradingManager:
                         'order_result': order_result
                     }
 
-                logger.warning(f"Using ticker price as fallback: ${entry_price:.6f}")
+                logger.warning(f"Using ticker price as fallback: ${entry_price:.6f}, estimated fees: ${buy_fee:.2f}")
             else:
-                # Use actual fill price and quantity from order
+                # Use actual fill price, quantity, and fees from Coinbase order
                 entry_price = fill_details['average_fill_price']
                 quantity = fill_details['filled_size']
-                logger.info(f"✅ Using actual fill data: {quantity:.8f} @ ${entry_price:.6f}")
+                buy_fee = fill_details.get('total_fees', 0)
+                filled_value = fill_details.get('filled_value', 0)
 
-            # Calculate position parameters (using actual fill values)
-            buy_fee = quote_size * (BUY_FEE_PERCENT / 100)
-            cost_basis = quote_size + buy_fee
+                # Extract Coinbase timing data
+                buy_order_created_time = fill_details.get('created_time')
+                buy_order_filled_time = fill_details.get('completion_time')
+
+                # Cost basis = what we paid for the coins + fees
+                # For buys: filled_value already includes the cost, add fees on top
+                cost_basis = filled_value + buy_fee
+
+                logger.info(f"✅ Using actual fill data: {quantity:.8f} @ ${entry_price:.6f}, "
+                           f"Filled Value: ${filled_value:.2f}, Fees: ${buy_fee:.2f}, Cost Basis: ${cost_basis:.2f}")
+
+                # Log timing metrics if available
+                if buy_order_created_time and buy_order_filled_time:
+                    from dateutil import parser
+                    created = parser.parse(buy_order_created_time)
+                    filled = parser.parse(buy_order_filled_time)
+                    fill_duration = (filled - created).total_seconds()
+                    logger.info(f"⏱️ Order timing: Created {buy_order_created_time} → Filled {buy_order_filled_time} ({fill_duration:.2f}s)")
 
             # Calculate minimum exit price (3% profit + fees)
             target_proceeds = cost_basis * (1 + MIN_PROFIT_TARGET / 100)
@@ -384,7 +447,7 @@ class LiveTradingManager:
             peak_price = entry_price
             trailing_exit_price = max(min_exit_price, peak_price * (1 - TRAILING_THRESHOLD / 100))
 
-            # Create live position
+            # Create live position with timing metrics
             position = LivePosition(
                 product_id=product_id,
                 order_id=order_id,
@@ -398,7 +461,10 @@ class LiveTradingManager:
                 stop_loss_price=stop_loss_price,
                 status="active",
                 mode="automated",
-                last_sync_timestamp=datetime.now().isoformat()
+                last_sync_timestamp=datetime.now().isoformat(),
+                buy_button_pressed_time=button_press_time,
+                buy_order_created_time=buy_order_created_time,
+                buy_order_filled_time=buy_order_filled_time
             )
 
             # Store position
@@ -559,6 +625,10 @@ class LiveTradingManager:
         position = self.positions[product_id]
 
         try:
+            # Capture sell initiation time if not already set (for manual exits via button press)
+            if not position.sell_button_pressed_time:
+                position.sell_button_pressed_time = datetime.now().isoformat()
+
             # Execute market sell
             sell_result = await self.trading_manager.create_market_sell_order(
                 product_id=product_id,
@@ -569,8 +639,10 @@ class LiveTradingManager:
                 logger.error(f"Automated exit failed for {product_id}: {sell_result.get('message')}")
                 return sell_result
 
-            # Get actual fill price from the order
+            # Get actual fill price and fee data from the order
             order_id = sell_result.get('order_id')
+            fill_result = None
+
             if order_id:
                 # Wait briefly for order to fill
                 import asyncio
@@ -581,13 +653,36 @@ class LiveTradingManager:
 
                 if fill_result.get('success'):
                     actual_exit_price = fill_result.get('average_fill_price')
-                    logger.info(f"📊 Actual fill price: ${actual_exit_price:.6f} (estimated: ${exit_price:.6f})")
+                    actual_fees = fill_result.get('total_fees', 0)
+
+                    # Capture Coinbase timing data for sell order
+                    position.sell_order_created_time = fill_result.get('created_time')
+                    position.sell_order_filled_time = fill_result.get('completion_time')
+
+                    logger.info(f"📊 Actual fill: ${actual_exit_price:.6f} (estimated: ${exit_price:.6f}), Fees: ${actual_fees:.2f}")
+
+                    # Log sell timing if available
+                    if position.sell_order_created_time and position.sell_order_filled_time:
+                        from dateutil import parser
+                        created = parser.parse(position.sell_order_created_time)
+                        filled = parser.parse(position.sell_order_filled_time)
+                        fill_duration = (filled - created).total_seconds()
+                        logger.info(f"⏱️ Sell timing: Created {position.sell_order_created_time} → Filled {position.sell_order_filled_time} ({fill_duration:.2f}s)")
+
                     exit_price = actual_exit_price
                 else:
-                    logger.warning(f"Could not get fill price, using estimated: ${exit_price:.6f}")
+                    logger.warning(f"Could not get fill data, using estimated: ${exit_price:.6f}")
 
-            # Calculate P&L with actual exit price
-            pnl_data = position.calculate_pnl(exit_price)
+            # Calculate P&L with actual sell order data (preferred) or exit price (fallback)
+            pnl_data = position.calculate_pnl(exit_price=exit_price, sell_fill_data=fill_result)
+
+            # Add timing data to pnl_data for display
+            pnl_data['buy_button_pressed_time'] = position.buy_button_pressed_time
+            pnl_data['buy_order_created_time'] = position.buy_order_created_time
+            pnl_data['buy_order_filled_time'] = position.buy_order_filled_time
+            pnl_data['sell_button_pressed_time'] = position.sell_button_pressed_time
+            pnl_data['sell_order_created_time'] = position.sell_order_created_time
+            pnl_data['sell_order_filled_time'] = position.sell_order_filled_time
 
             # Calculate holding time
             entry_time = datetime.fromisoformat(position.entry_time)
@@ -618,12 +713,21 @@ class LiveTradingManager:
             logger.error(f"Error executing automated exit: {e}")
             return {'success': False, 'message': str(e)}
 
-    async def execute_manual_exit(self, product_id: str) -> Dict:
-        """Execute manual market sell"""
+    async def execute_manual_exit(self, product_id: str, button_press_time: str = None) -> Dict:
+        """Execute manual market sell
+
+        Args:
+            product_id: Trading pair
+            button_press_time: ISO timestamp when user pressed sell button
+        """
         if product_id not in self.positions:
             return {'success': False, 'message': 'Position not found'}
 
         position = self.positions[product_id]
+
+        # Store button press time if provided (will be used in execute_automated_exit)
+        if button_press_time:
+            position.sell_button_pressed_time = button_press_time
 
         # Get current price
         product_info = await self.trading_manager.get_product_info(product_id)

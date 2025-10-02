@@ -5,6 +5,7 @@ import sys
 import os
 import sqlite3
 from datetime import datetime
+from typing import Dict
 from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from aiohttp import web
@@ -65,6 +66,9 @@ pending_custom_buys = {}
 
 # Store active position cards (product_id -> card_info)
 active_position_cards = {}
+
+# Store active alert cards (product_id -> alert_card_info)
+active_alert_cards = {}
 
 # Store pending limit order inputs (chat_id -> order_context)
 pending_limit_orders = {}
@@ -314,6 +318,7 @@ def format_price_alert(data):
                 InlineKeyboardButton("📊 Chart", url=chart_url)
             ],
             [
+                InlineKeyboardButton("🔄 Refresh Price", callback_data=f"refresh_alert:{data['symbol']}"),
                 InlineKeyboardButton("👁️ Ignore", callback_data=f"ignore:{data['symbol']}")
             ]
         ]
@@ -852,6 +857,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             product_id = data.split(":", 1)[1]
             await handle_ignore_request(query, product_id)
 
+        elif data.startswith("refresh_alert:"):
+            product_id = data.split(":", 1)[1]
+            await handle_refresh_alert(query, product_id)
+
         # Removed: confirm_buy callback - now going straight to execute_buy
 
         elif data.startswith("execute_buy:"):
@@ -1055,6 +1064,9 @@ async def handle_execute_buy(query, product_id: str, amount: str, percentage: st
     NEW: Uses LiveTradingManager for automated position management
     """
     try:
+        # Capture button press time for performance metrics
+        button_press_time = datetime.now().isoformat()
+
         await query.edit_message_text(f"⏳ Executing buy order for {product_id}...")
 
         # Fetch current balance and recalculate to ensure accuracy
@@ -1071,7 +1083,8 @@ async def handle_execute_buy(query, product_id: str, amount: str, percentage: st
         result = await live_trading_manager.execute_buy(
             product_id=product_id,
             quote_size=quote_size,
-            position_percentage=float(percentage)
+            position_percentage=float(percentage),
+            button_press_time=button_press_time
         )
 
         if not result['success']:
@@ -1088,6 +1101,13 @@ async def handle_execute_buy(query, product_id: str, amount: str, percentage: st
             quantity=position.quantity,
             cost_basis=position.cost_basis
         )
+
+        # Clean up alert card for this product if it exists
+        global active_alert_cards
+        if product_id in active_alert_cards:
+            del active_alert_cards[product_id]
+            delete_alert_card_from_db(product_id)
+            logger.info(f"🗑️ Removed alert card for {product_id} after purchase")
 
         # Update trading state and switch WebSocket to priority mode
         await trading_state_controller.add_position(product_id)
@@ -1120,21 +1140,69 @@ async def handle_chart_request(query, product_id: str):
     """Handle chart button click"""
     chart_url = f"https://www.coinbase.com/advanced-trade/spot/{product_id}"
 
-    keyboard = [
-        [InlineKeyboardButton("📊 View Chart", url=chart_url)]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await query.edit_message_text(
-        f"📈 *Chart for {product_id}*\n\nClick the button below to view the chart on Coinbase.",
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
+    # Just show a simple popup - Telegram API doesn't allow bots to directly open URLs
+    # The best we can do is keep the original message and show a notification
+    await query.answer(f"📊 Chart: {chart_url}", show_alert=True)
 
 
 async def handle_ignore_request(query, product_id: str):
-    """Handle ignore button click"""
+    """Handle ignore button click - remove alert from tracking and database"""
+    global active_alert_cards
+
+    # Remove from active alert cards tracking
+    if product_id in active_alert_cards:
+        del active_alert_cards[product_id]
+        delete_alert_card_from_db(product_id)
+        logger.info(f"🗑️ Removed alert card for {product_id} from tracking")
+
     await query.edit_message_text(f"👁️ Alert for {product_id} ignored.")
+
+
+async def handle_refresh_alert(query, product_id: str):
+    """Handle refresh alert button - update price on existing alert"""
+    try:
+        # Get current product info
+        product_info = await trading_manager.get_product_info(product_id)
+
+        if 'error' in product_info:
+            await query.answer(f"❌ Error: {product_info['error']}", show_alert=True)
+            return
+
+        current_price = product_info.get('current_price', 0)
+
+        # Extract original alert info from the message if possible
+        original_text = query.message.text
+
+        # Update the alert message with current price
+        chart_url = f"https://www.coinbase.com/advanced-trade/spot/{product_id}"
+
+        updated_message = (
+            f"🔄 *REFRESHED ALERT*\n\n"
+            f"*Symbol:* {product_id}\n"
+            f"*Current Price:* ${current_price:,.6f}\n"
+            f"*Refreshed:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
+            f"_Original alert:_\n{original_text}"
+        )
+
+        # Keep the same buttons
+        keyboard = [
+            [
+                InlineKeyboardButton("🚀 Buy", callback_data=f"buy:{product_id}"),
+                InlineKeyboardButton("📊 Chart", url=chart_url)
+            ],
+            [
+                InlineKeyboardButton("🔄 Refresh Price", callback_data=f"refresh_alert:{product_id}"),
+                InlineKeyboardButton("👁️ Ignore", callback_data=f"ignore:{product_id}")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.edit_message_text(updated_message, parse_mode='Markdown', reply_markup=reply_markup)
+        await query.answer(f"✅ Price updated: ${current_price:,.6f}")
+
+    except Exception as e:
+        logger.error(f"Error refreshing alert: {e}")
+        await query.answer(f"❌ Error refreshing price", show_alert=True)
 
 
 async def handle_market_sell_request(query, product_id: str, chat_id: str):
@@ -1256,8 +1324,19 @@ def init_position_cards_db():
             )
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS alert_cards (
+                product_id TEXT PRIMARY KEY,
+                message_id INTEGER NOT NULL,
+                chat_id TEXT NOT NULL,
+                alert_data TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                status TEXT DEFAULT 'active'
+            )
+        """)
+
         db_conn.commit()
-        logger.info(f"✅ Position cards database initialized at {DB_PATH}")
+        logger.info(f"✅ Position cards and alert cards database initialized at {DB_PATH}")
     except Exception as e:
         logger.error(f"Error initializing position cards database: {e}")
 
@@ -1327,6 +1406,61 @@ def remove_position_card_from_db(product_id: str):
         db_conn.commit()
     except Exception as e:
         logger.error(f"Error removing position card from DB: {e}")
+
+
+def save_alert_card_to_db(product_id: str, card_data: dict):
+    """Save alert card to database"""
+    try:
+        import json
+        cursor = db_conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO alert_cards
+            (product_id, message_id, chat_id, alert_data, created_at, status)
+            VALUES (?, ?, ?, ?, ?, 'active')
+        """, (
+            product_id,
+            card_data['message_id'],
+            card_data['chat_id'],
+            json.dumps(card_data['alert_data']),
+            card_data['created_at']
+        ))
+        db_conn.commit()
+    except Exception as e:
+        logger.error(f"Error saving alert card to DB: {e}")
+
+
+def restore_alert_cards_from_db():
+    """Restore alert cards from database on startup"""
+    global active_alert_cards
+    try:
+        import json
+        cursor = db_conn.cursor()
+        cursor.execute("SELECT * FROM alert_cards WHERE status = 'active'")
+        rows = cursor.fetchall()
+
+        for row in rows:
+            product_id = row[0]
+            active_alert_cards[product_id] = {
+                'message_id': row[1],
+                'chat_id': row[2],
+                'alert_data': json.loads(row[3]),
+                'created_at': row[4]
+            }
+
+        if rows:
+            logger.info(f"✅ Restored {len(rows)} alert card(s) from database")
+    except Exception as e:
+        logger.error(f"Error restoring alert cards from DB: {e}")
+
+
+def delete_alert_card_from_db(product_id: str):
+    """Delete alert card from database"""
+    try:
+        cursor = db_conn.cursor()
+        cursor.execute("DELETE FROM alert_cards WHERE product_id = ?", (product_id,))
+        db_conn.commit()
+    except Exception as e:
+        logger.error(f"Error deleting alert card from DB: {e}")
 
 
 async def handle_position_limit_prompt(query, product_id: str, chat_id: str):
@@ -1619,6 +1753,9 @@ async def handle_position_market_execute(query, product_id: str, chat_id: str):
             await query.edit_message_text("❌ Position not found")
             return
 
+        # Capture button press time for performance metrics
+        sell_button_press_time = datetime.now().isoformat()
+
         card = active_position_cards[product_id]
         await query.edit_message_text(f"⏳ Executing market sell for {product_id}...")
 
@@ -1629,19 +1766,28 @@ async def handle_position_market_execute(query, product_id: str, chat_id: str):
 
         # Execute via LiveTradingManager
         if live_trading_manager:
-            result = await live_trading_manager.execute_manual_exit(product_id)
+            result = await live_trading_manager.execute_manual_exit(product_id, button_press_time=sell_button_press_time)
 
             if not result['success']:
                 await query.edit_message_text(f"❌ Error: {result['message']}")
                 return
 
-            # Archive the card
-            await archive_position_card(application.bot, product_id, card['current_price'], "Manual market sell")
+            # Get P&L data from result
+            pnl_data = result.get('pnl_data', {})
+            exit_price_actual = pnl_data.get('exit_price', card['current_price'])
+
+            # Archive the card with actual P&L data
+            await archive_position_card(
+                bot=application.bot,
+                product_id=product_id,
+                exit_price=exit_price_actual,
+                reason="Manual market sell",
+                pnl_data=pnl_data
+            )
 
             # Update trading state (remove from priority feed)
             await trading_state_controller.remove_position(product_id)
 
-            pnl_data = result.get('pnl_data', {})
             pnl = pnl_data.get('pnl', 0)
             pnl_pct = pnl_data.get('pnl_percent', 0)
             pnl_sign = "+" if pnl >= 0 else ""
@@ -1651,7 +1797,7 @@ async def handle_position_market_execute(query, product_id: str, chat_id: str):
                 f"✅ *Market Sell Executed*\n\n"
                 f"Product: {product_id}\n"
                 f"Quantity: {card['quantity']:.8f}\n"
-                f"Exit Price: ${card['current_price']:,.6f}\n"
+                f"Exit Price: ${exit_price_actual:,.6f}\n"
                 f"Net Proceeds: ${pnl_data.get('net_proceeds', 0):,.2f}\n\n"
                 f"Final P&L: {pnl_sign}${abs(pnl):.2f} ({pnl_sign}{pnl_pct:.2f}%) {pnl_emoji}\n\n"
                 f"📊 Position closed\n"
@@ -1877,10 +2023,11 @@ def format_position_card_message(product_id: str, entry_price: float, entry_time
                                   quantity: float, cost_basis: float, current_price: float,
                                   pnl_usd: float, pnl_pct: float, mode: str = "automated",
                                   trailing_stop: float = None, stop_loss: float = None,
-                                  peak_price: float = None) -> str:
+                                  peak_price: float = None, buy_button_pressed_time: str = None,
+                                  buy_order_filled_time: str = None) -> str:
     """
     Format the position card message with automated trading status
-    NEW: Shows bot mode, trailing stop, stop loss, and peak price
+    NEW: Shows bot mode, trailing stop, stop loss, peak price, and performance timing
     """
     pnl_emoji = "📈" if pnl_usd >= 0 else "📉"
     pnl_sign = "+" if pnl_usd >= 0 else ""
@@ -1912,6 +2059,14 @@ def format_position_card_message(product_id: str, entry_price: float, entry_time
             message += f"Trailing Stop: ${trailing_stop:,.6f}\n"
         if stop_loss:
             message += f"Stop Loss: ${stop_loss:,.6f}\n"
+
+    # Add buy order timing performance metrics
+    if buy_button_pressed_time and buy_order_filled_time:
+        from dateutil import parser
+        button_time = parser.parse(buy_button_pressed_time)
+        filled_time = parser.parse(buy_order_filled_time)
+        duration = (filled_time - button_time).total_seconds()
+        message += f"\n⏱️ *Order Fill Time:* {duration:.2f}s\n"
 
     return message
 
@@ -1977,8 +2132,13 @@ async def update_position_card(bot: Bot, product_id: str, current_price: float):
             mode=live_position.mode if live_position else "manual",
             trailing_stop=live_position.trailing_exit_price if live_position else None,
             stop_loss=live_position.stop_loss_price if live_position else None,
-            peak_price=live_position.peak_price if live_position else None
+            peak_price=live_position.peak_price if live_position else None,
+            buy_button_pressed_time=live_position.buy_button_pressed_time if live_position else None,
+            buy_order_filled_time=live_position.buy_order_filled_time if live_position else None
         )
+
+        # Chart URL for this product
+        chart_url = f"https://www.coinbase.com/advanced-trade/spot/{product_id}"
 
         # Adjust buttons based on mode
         if live_position and live_position.mode == "manual_limit_order":
@@ -1989,6 +2149,7 @@ async def update_position_card(bot: Bot, product_id: str, current_price: float):
                     InlineKeyboardButton("💰 Sell Now", callback_data=f"pos_action:{product_id}:market:confirm")
                 ],
                 [
+                    InlineKeyboardButton("📈 Chart", url=chart_url),
                     InlineKeyboardButton("🔄 Refresh", callback_data=f"pos_action:{product_id}:refresh")
                 ]
             ]
@@ -2000,6 +2161,7 @@ async def update_position_card(bot: Bot, product_id: str, current_price: float):
                     InlineKeyboardButton("💰 Sell at Market", callback_data=f"pos_action:{product_id}:market:confirm")
                 ],
                 [
+                    InlineKeyboardButton("📈 Chart", url=chart_url),
                     InlineKeyboardButton("🔄 Refresh", callback_data=f"pos_action:{product_id}:refresh")
                 ]
             ]
@@ -2020,8 +2182,17 @@ async def update_position_card(bot: Bot, product_id: str, current_price: float):
         logger.error(f"Error updating position card: {e}")
 
 
-async def archive_position_card(bot: Bot, product_id: str, exit_price: float, reason: str):
-    """Archive position card when position is closed"""
+async def archive_position_card(bot: Bot, product_id: str, exit_price: float, reason: str, pnl_data: Dict = None):
+    """
+    Archive position card when position is closed
+
+    Args:
+        bot: Telegram bot instance
+        product_id: Product ID of the position
+        exit_price: Exit price
+        reason: Reason for closing
+        pnl_data: P&L data from LiveTradingManager (preferred - uses actual Coinbase data)
+    """
     global active_position_cards
 
     if product_id not in active_position_cards:
@@ -2030,10 +2201,21 @@ async def archive_position_card(bot: Bot, product_id: str, exit_price: float, re
     card = active_position_cards[product_id]
 
     try:
-        # Calculate final P&L
-        gross_value = exit_price * card['quantity']
-        final_pnl_usd = gross_value - card['cost_basis']
-        final_pnl_pct = (final_pnl_usd / card['cost_basis']) * 100
+        # Use P&L data from LiveTradingManager if available (uses actual Coinbase fees)
+        if pnl_data:
+            final_pnl_usd = pnl_data.get('pnl', 0)
+            final_pnl_pct = pnl_data.get('pnl_percent', 0)
+            net_proceeds = pnl_data.get('net_proceeds', 0)
+            sell_fee = pnl_data.get('sell_fee', 0)
+            actual_exit_price = pnl_data.get('exit_price', exit_price)
+        else:
+            # Fallback: estimate (not as accurate)
+            gross_value = exit_price * card['quantity']
+            final_pnl_usd = gross_value - card['cost_basis']
+            final_pnl_pct = (final_pnl_usd / card['cost_basis']) * 100
+            net_proceeds = gross_value
+            sell_fee = 0
+            actual_exit_price = exit_price
 
         pnl_emoji = "✅" if final_pnl_usd >= 0 else "❌"
         pnl_sign = "+" if final_pnl_usd >= 0 else ""
@@ -2041,12 +2223,44 @@ async def archive_position_card(bot: Bot, product_id: str, exit_price: float, re
         message = (
             f"🏁 *CLOSED POSITION: {product_id}*\n\n"
             f"Entry: ${card['entry_price']:,.6f} @ {card['entry_time']}\n"
-            f"Exit: ${exit_price:,.6f}\n"
+            f"Exit: ${actual_exit_price:,.6f}\n"
             f"Quantity: {card['quantity']:.8f}\n"
-            f"Cost Basis: ${card['cost_basis']:.2f}\n\n"
+            f"Cost Basis: ${card['cost_basis']:.2f}\n"
+            f"Net Proceeds: ${net_proceeds:.2f}\n"
+            f"Sell Fee: ${sell_fee:.2f}\n\n"
             f"Final P&L: {pnl_sign}${abs(final_pnl_usd):.2f} ({pnl_sign}{final_pnl_pct:.2f}%) {pnl_emoji}\n"
             f"Reason: {reason}\n"
         )
+
+        # Add performance timing metrics if available
+        if pnl_data:
+            buy_button_time = pnl_data.get('buy_button_pressed_time')
+            buy_filled_time = pnl_data.get('buy_order_filled_time')
+            sell_button_time = pnl_data.get('sell_button_pressed_time')
+            sell_filled_time = pnl_data.get('sell_order_filled_time')
+
+            if buy_button_time and buy_filled_time and sell_button_time and sell_filled_time:
+                from dateutil import parser
+
+                # Calculate buy timing
+                buy_start = parser.parse(buy_button_time)
+                buy_end = parser.parse(buy_filled_time)
+                buy_duration = (buy_end - buy_start).total_seconds()
+
+                # Calculate sell timing
+                sell_start = parser.parse(sell_button_time)
+                sell_end = parser.parse(sell_filled_time)
+                sell_duration = (sell_end - sell_start).total_seconds()
+
+                # Calculate total round-trip time
+                total_duration = buy_duration + sell_duration
+
+                message += (
+                    f"\n⏱️ *Performance Metrics:*\n"
+                    f"Buy Fill Time: {buy_duration:.2f}s\n"
+                    f"Sell Fill Time: {sell_duration:.2f}s\n"
+                    f"Total Order Time: {total_duration:.2f}s\n"
+                )
 
         await bot.edit_message_text(
             chat_id=card['chat_id'],
@@ -2065,7 +2279,9 @@ async def archive_position_card(bot: Bot, product_id: str, exit_price: float, re
 
 
 async def send_alert(bot: Bot, alert_data: dict):
-    """Send alert with trading buttons"""
+    """Send alert with trading buttons and persistence"""
+    global active_alert_cards
+
     if not alerts_enabled:
         logger.info("Alerts disabled, skipping notification")
         return
@@ -2083,16 +2299,50 @@ async def send_alert(bot: Bot, alert_data: dict):
         parse_mode = 'Markdown'
         logger.info(f"Received data-format alert: {alert_data.get('symbol', 'unknown')}")
 
+    # Extract product_id for persistence (only for alerts with buttons)
+    product_id = alert_data.get('symbol') if 'symbol' in alert_data else None
+
+    # Skip persistence for momentum_end events and text-only alerts
+    should_persist = product_id and reply_markup and alert_data.get('event_type') != 'momentum_end'
+
+    # Delete old alert for same product_id if it exists
+    if should_persist and product_id in active_alert_cards:
+        old_card = active_alert_cards[product_id]
+        try:
+            await bot.delete_message(
+                chat_id=old_card['chat_id'],
+                message_id=old_card['message_id']
+            )
+            logger.info(f"🗑️ Deleted old alert card for {product_id}")
+        except Exception as e:
+            logger.warning(f"Could not delete old alert card: {e}")
+
+        # Remove from database
+        delete_alert_card_from_db(product_id)
+
     # Send to personal chat
     if TELEGRAM_CHAT_ID:
         try:
-            await bot.send_message(
+            sent_message = await bot.send_message(
                 chat_id=TELEGRAM_CHAT_ID,
                 text=message,
                 parse_mode=parse_mode,
                 reply_markup=reply_markup
             )
             logger.info("📤 Alert sent successfully")
+
+            # Store alert card for persistence
+            if should_persist:
+                import time
+                active_alert_cards[product_id] = {
+                    'message_id': sent_message.message_id,
+                    'chat_id': TELEGRAM_CHAT_ID,
+                    'alert_data': alert_data,
+                    'created_at': time.time()
+                }
+                save_alert_card_to_db(product_id, active_alert_cards[product_id])
+                logger.info(f"💾 Saved alert card for {product_id} to database")
+
         except Exception as e:
             logger.error(f"Failed to send alert to user: {e}")
 
@@ -2262,12 +2512,17 @@ async def live_position_updater(bot: Bot):
                                         )
 
                                         if exit_result['success']:
-                                            # Archive position card
+                                            # Get P&L data from exit result
+                                            pnl_data = exit_result.get('pnl_data', {})
+                                            exit_price_actual = exit_result.get('actual_exit_price', current_price)
+
+                                            # Archive position card with actual P&L data
                                             await archive_position_card(
                                                 bot=bot,
                                                 product_id=product_id,
-                                                exit_price=current_price,
-                                                reason=exit_info['reason']
+                                                exit_price=exit_price_actual,
+                                                reason=exit_info['reason'],
+                                                pnl_data=pnl_data
                                             )
 
                                             # Update trading state (remove from priority feed)
@@ -2298,6 +2553,7 @@ async def post_init(app: Application) -> None:
     # Initialize position cards database
     init_position_cards_db()
     restore_position_cards_from_db()
+    restore_alert_cards_from_db()
 
     try:
         # Initialize trading manager

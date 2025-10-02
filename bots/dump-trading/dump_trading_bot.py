@@ -358,8 +358,18 @@ class DumpTradingBot:
             logger.info(f"⏭️  Already have position in {symbol}, skipping")
             return
 
+        logger.info("=" * 80)
+        logger.info(f"💭 ENTRY DECISION ANALYSIS: {symbol}")
+        logger.info("-" * 80)
+
         # Fetch dynamic fees before trade
         buy_fee_rate, sell_fee_rate = self.fetch_dynamic_fees()
+
+        logger.info(f"📢 Dump Alert Received:")
+        logger.info(f"   Dump Size: {abs(dump_pct):.2f}%")
+        logger.info(f"   Entry Price: ${entry_price:.6f}")
+        logger.info(f"   Volume Surge: {volume_surge:.2f}x average")
+        logger.info("")
 
         # Calculate spend amount (100% allocation minus fees)
         # spend_amount + (spend_amount * fee_rate) = balance
@@ -371,6 +381,7 @@ class DumpTradingBot:
 
         if cost_basis > self.capital:
             logger.warning(f"⚠️  Insufficient capital for {symbol}")
+            logger.info("=" * 80)
             return
 
         # Calculate quantity
@@ -392,6 +403,52 @@ class DumpTradingBot:
 
         # Stop loss: 2% below entry (tight stop)
         stop_loss_price = entry_price * (1 - MAX_LOSS_PERCENT / 100)
+
+        # Calculate risk/reward
+        risk_amount = cost_basis * (MAX_LOSS_PERCENT / 100)
+        reward_amount_min = cost_basis * (MIN_PROFIT_TARGET / 100)
+        reward_amount_target = cost_basis * (TARGET_PROFIT / 100)
+        risk_reward_ratio = reward_amount_target / risk_amount if risk_amount > 0 else 0
+
+        logger.info(f"💰 Position Sizing:")
+        logger.info(f"   Available Capital: ${self.capital:.2f}")
+        logger.info(f"   Allocation: 100% (${spend_amount:.2f})")
+        logger.info(f"   Buy Fee ({buy_fee_rate*100:.3f}%): ${buy_fee:.2f}")
+        logger.info(f"   Total Cost Basis: ${cost_basis:.2f}")
+        logger.info(f"   Quantity: {quantity:.6f} {symbol.split('-')[0]}")
+        logger.info("")
+
+        logger.info(f"🎯 Exit Strategy:")
+        logger.info(f"   Break-Even: ${break_even_price:.6f} ({((break_even_price - entry_price) / entry_price * 100):+.2f}%)")
+        logger.info(f"   Min Profit Target: ${min_profit_price:.6f} ({MIN_PROFIT_TARGET}% = ${reward_amount_min:.2f})")
+        logger.info(f"   Ideal Target: ${target_profit_price:.6f} ({TARGET_PROFIT}% = ${reward_amount_target:.2f})")
+        logger.info(f"   Stop Loss: ${stop_loss_price:.6f} (-{MAX_LOSS_PERCENT}% = -${risk_amount:.2f})")
+        logger.info("")
+
+        logger.info(f"📊 Risk/Reward Analysis:")
+        logger.info(f"   Risk: ${risk_amount:.2f} ({MAX_LOSS_PERCENT}%)")
+        logger.info(f"   Reward: ${reward_amount_min:.2f} to ${reward_amount_target:.2f} ({MIN_PROFIT_TARGET}%-{TARGET_PROFIT}%)")
+        logger.info(f"   Risk/Reward Ratio: 1:{risk_reward_ratio:.2f}")
+        logger.info("")
+
+        logger.info(f"🧠 Entry Rationale:")
+        logger.info(f"   ✓ Significant dump detected ({abs(dump_pct):.2f}% drop)")
+        logger.info(f"   ✓ Mean reversion strategy - expecting bounce")
+        if volume_surge >= VOLUME_SURGE_THRESHOLD:
+            logger.info(f"   ✓ Strong volume confirmation ({volume_surge:.2f}x average)")
+        else:
+            logger.info(f"   ⚠️ Volume below threshold ({volume_surge:.2f}x vs {VOLUME_SURGE_THRESHOLD}x target)")
+        logger.info(f"   ✓ Tight stop loss ({MAX_LOSS_PERCENT}%) limits downside")
+        logger.info(f"   ✓ Quick profit targets ({MIN_PROFIT_TARGET}%-{TARGET_PROFIT}%) for rapid exits")
+        logger.info(f"   ✓ Risk/Reward favorable: 1:{risk_reward_ratio:.2f}")
+        logger.info("")
+
+        logger.info(f"⏱️ Time Constraints:")
+        logger.info(f"   Min Hold: {MIN_HOLD_TIME_MINUTES} minutes (let bounce develop)")
+        logger.info(f"   Max Hold: {MAX_HOLD_TIME_MINUTES} minutes (force exit if stagnant)")
+        logger.info("")
+
+        logger.info(f"🚀 EXECUTING BUY ORDER...")
 
         # Initial peak and trailing
         peak_price = entry_price
@@ -420,18 +477,9 @@ class DumpTradingBot:
         self.positions[symbol] = position
         self.capital -= cost_basis
 
-        logger.info("=" * 60)
-        logger.info(f"🟢 OPENED DUMP POSITION: {symbol}")
-        logger.info(f"   Entry: ${entry_price:.6f} (after {abs(dump_pct):.2f}% dump)")
-        logger.info(f"   Quantity: {quantity:.4f}")
-        logger.info(f"   Spend: ${spend_amount:.2f} + ${buy_fee:.2f} fee = ${cost_basis:.2f}")
-        logger.info(f"   Fee Rates: Buy {buy_fee_rate*100:.3f}%, Sell {sell_fee_rate*100:.3f}%")
-        logger.info(f"   Break-Even: ${break_even_price:.6f}")
-        logger.info(f"   Targets: ${min_profit_price:.6f} (1%) → ${target_profit_price:.6f} (3%)")
-        logger.info(f"   Stop Loss: ${stop_loss_price:.6f} (-2%)")
-        logger.info(f"   Volume Surge: {volume_surge:.2f}x")
+        logger.info(f"✅ POSITION OPENED: {symbol}")
         logger.info(f"   Capital Remaining: ${self.capital:.2f}")
-        logger.info("=" * 60)
+        logger.info("=" * 80)
 
         # Record trade entry
         self._record_trade_entry(position)
@@ -446,12 +494,94 @@ class DumpTradingBot:
         # Update price history for indicators
         position.update_price_history(current_price)
 
+        # Calculate current metrics
+        entry_time = datetime.fromisoformat(position.entry_time)
+        time_held_minutes = (datetime.now() - entry_time).total_seconds() / 60
+        unrealized = position.calculate_pnl(current_price)
+        price_change_pct = ((current_price - position.entry_price) / position.entry_price) * 100
+
+        # Calculate indicator values
+        rsi = position.calculate_rsi() if TALIB_AVAILABLE else None
+        sma = position.calculate_sma(SMA_PERIOD) if TALIB_AVAILABLE else None
+
+        # Log detailed position analysis
+        logger.info("=" * 80)
+        logger.info(f"💭 POSITION ANALYSIS: {symbol}")
+        logger.info("-" * 80)
+        logger.info(f"📊 Current State:")
+        logger.info(f"   Entry: ${position.entry_price:.6f} → Current: ${current_price:.6f} ({price_change_pct:+.2f}%)")
+        logger.info(f"   Time Held: {time_held_minutes:.1f} min / {MAX_HOLD_TIME_MINUTES:.0f} min max")
+        logger.info(f"   Peak: ${position.peak_price:.6f}")
+        logger.info(f"   Unrealized P&L: ${unrealized['pnl']:+.2f} ({unrealized['pnl_percent']:+.2f}%)")
+        logger.info(f"   Capital at Risk: ${position.cost_basis:.2f}")
+        logger.info("")
+        logger.info(f"🎯 Exit Targets:")
+        logger.info(f"   Break-Even: ${position.break_even_price:.6f} ({((position.break_even_price - current_price) / current_price * 100):+.2f}% away)")
+        logger.info(f"   Min Profit: ${position.min_profit_price:.6f} ({((position.min_profit_price - current_price) / current_price * 100):+.2f}% away)")
+        logger.info(f"   Target: ${position.target_profit_price:.6f} ({((position.target_profit_price - current_price) / current_price * 100):+.2f}% away)")
+        logger.info(f"   Stop Loss: ${position.stop_loss_price:.6f} ({((position.stop_loss_price - current_price) / current_price * 100):+.2f}% away)")
+        logger.info(f"   Trailing Stop: ${position.trailing_exit_price:.6f}")
+        logger.info("")
+
+        # Technical indicators
+        if TALIB_AVAILABLE:
+            logger.info(f"📈 Technical Indicators:")
+            if rsi is not None:
+                rsi_status = "OVERBOUGHT ⚠️" if rsi > RSI_OVERBOUGHT else "OK ✓"
+                logger.info(f"   RSI(14): {rsi:.1f} - {rsi_status}")
+            if sma is not None:
+                sma_diff = ((current_price - sma) / sma) * 100
+                sma_status = "ABOVE ✓" if current_price > sma else "BELOW ⚠️"
+                logger.info(f"   SMA({SMA_PERIOD}): ${sma:.6f} - Price is {sma_status} ({sma_diff:+.2f}%)")
+            logger.info("")
+
+        # Volume analysis
+        if avg_volume > 0 and current_volume > 0:
+            volume_ratio = current_volume / avg_volume
+            volume_status = "STRONG ✓" if volume_ratio > 1.0 else "WEAK ⚠️" if volume_ratio < 0.5 else "NORMAL"
+            logger.info(f"📊 Volume Analysis:")
+            logger.info(f"   Current: {current_volume:,.0f} / Average: {avg_volume:,.0f}")
+            logger.info(f"   Ratio: {volume_ratio:.2f}x - {volume_status}")
+            logger.info("")
+
+        # Decision analysis
+        logger.info(f"🧠 Thinking Process:")
+
+        # Check each exit condition and explain why it's not triggered
+        if current_price <= position.stop_loss_price:
+            logger.info(f"   💀 STOP LOSS TRIGGERED - Price below ${position.stop_loss_price:.6f}")
+        elif current_price >= position.target_profit_price:
+            logger.info(f"   🎯 TARGET PROFIT HIT - Price reached ${position.target_profit_price:.6f}")
+        elif position.peak_price >= position.min_profit_price and current_price < position.break_even_price:
+            logger.info(f"   ⚖️ BREAK-EVEN EXIT TRIGGERED - Hit profit but now below entry")
+        elif current_price >= position.min_profit_price and current_price <= position.trailing_exit_price:
+            logger.info(f"   📉 TRAILING STOP HIT - Dropped from peak to ${position.trailing_exit_price:.6f}")
+        elif time_held_minutes < MIN_HOLD_TIME_MINUTES:
+            remaining = MIN_HOLD_TIME_MINUTES - time_held_minutes
+            logger.info(f"   ⏱️ HOLDING - Minimum hold time not reached ({remaining:.1f} min remaining)")
+            logger.info(f"   💭 Waiting for: either target hit, stop loss, or min hold time")
+        elif rsi and rsi > RSI_OVERBOUGHT and unrealized['pnl_percent'] > 0:
+            logger.info(f"   🌡️ RSI OVERBOUGHT + PROFIT - Consider exiting (RSI={rsi:.1f})")
+        elif sma and current_price < sma:
+            logger.info(f"   📉 PRICE BELOW SMA - Momentum weakening, consider exit")
+        elif time_held_minutes >= MAX_HOLD_TIME_MINUTES:
+            logger.info(f"   ⏰ MAX HOLD TIME REACHED - Force exit regardless of P&L")
+        elif avg_volume > 0 and current_volume > 0 and (current_volume / avg_volume) < 0.5 and unrealized['pnl_percent'] > 0:
+            logger.info(f"   💧 VOLUME DRIED UP - Exit with profit while possible")
+        else:
+            logger.info(f"   ✅ HOLDING POSITION - No exit conditions met")
+            if unrealized['pnl_percent'] > 0:
+                logger.info(f"   💭 In profit, watching for: target (${position.target_profit_price:.6f}) or trailing stop")
+            else:
+                logger.info(f"   💭 Building position, watching for: bounce to profit or stop loss")
+
+        logger.info("=" * 80)
+
         # Update peak
         peak_updated = position.update_peak(current_price)
         if peak_updated:
-            unrealized = position.calculate_pnl(current_price)
             logger.info(f"🔼 {symbol}: New peak ${current_price:.6f}, "
-                       f"Unrealized P&L: {unrealized['pnl_percent']:+.2f}%")
+                       f"Trailing exit updated to ${position.trailing_exit_price:.6f}")
 
         # Check exit conditions
         should_exit, exit_reason = position.should_exit(current_price, current_volume, avg_volume)
@@ -466,24 +596,123 @@ class DumpTradingBot:
         position = self.positions[symbol]
         pnl_data = position.calculate_pnl(exit_price)
 
-        # Update capital
-        self.capital += pnl_data['net_proceeds']
-
         # Calculate holding time
         entry_time = datetime.fromisoformat(position.entry_time)
         exit_time = datetime.now()
         holding_seconds = (exit_time - entry_time).total_seconds()
+        holding_minutes = holding_seconds / 60
 
-        logger.info("=" * 60)
-        logger.info(f"🔴 CLOSED DUMP POSITION: {symbol}")
-        logger.info(f"   Entry: ${position.entry_price:.6f} → Exit: ${exit_price:.6f}")
-        logger.info(f"   Peak: ${position.peak_price:.6f}")
-        logger.info(f"   Net Proceeds: ${pnl_data['net_proceeds']:.2f}")
-        logger.info(f"   P&L: ${pnl_data['pnl']:+.2f} ({pnl_data['pnl_percent']:+.2f}%)")
-        logger.info(f"   Holding Time: {holding_seconds/60:.1f} minutes")
+        # Calculate price movement
+        price_change_pct = ((exit_price - position.entry_price) / position.entry_price) * 100
+        peak_change_pct = ((position.peak_price - position.entry_price) / position.entry_price) * 100
+        peak_to_exit_pct = ((exit_price - position.peak_price) / position.peak_price) * 100
+
+        # Update capital
+        self.capital += pnl_data['net_proceeds']
+
+        # Get final indicator values if available
+        rsi = position.calculate_rsi() if TALIB_AVAILABLE else None
+        sma = position.calculate_sma(SMA_PERIOD) if TALIB_AVAILABLE else None
+
+        logger.info("=" * 80)
+        logger.info(f"💭 EXIT DECISION ANALYSIS: {symbol}")
+        logger.info("-" * 80)
+
+        logger.info(f"🔚 Exit Triggered:")
         logger.info(f"   Reason: {reason}")
-        logger.info(f"   New Capital: ${self.capital:.2f}")
-        logger.info("=" * 60)
+        logger.info(f"   Exit Price: ${exit_price:.6f}")
+        logger.info(f"   Time Held: {holding_minutes:.1f} minutes")
+        logger.info("")
+
+        logger.info(f"📊 Position Summary:")
+        logger.info(f"   Entry: ${position.entry_price:.6f}")
+        logger.info(f"   Peak: ${position.peak_price:.6f} ({peak_change_pct:+.2f}% from entry)")
+        logger.info(f"   Exit: ${exit_price:.6f} ({price_change_pct:+.2f}% from entry)")
+        logger.info(f"   Peak to Exit: {peak_to_exit_pct:+.2f}%")
+        logger.info(f"   Quantity: {position.quantity:.6f}")
+        logger.info("")
+
+        logger.info(f"💰 Financial Results:")
+        logger.info(f"   Cost Basis: ${position.cost_basis:.2f}")
+        logger.info(f"   Gross Proceeds: ${pnl_data['gross_proceeds']:.2f}")
+        logger.info(f"   Sell Fee ({position.sell_fee_rate*100:.3f}%): ${pnl_data['sell_fee']:.2f}")
+        logger.info(f"   Net Proceeds: ${pnl_data['net_proceeds']:.2f}")
+        logger.info(f"   Net P&L: ${pnl_data['pnl']:+.2f} ({pnl_data['pnl_percent']:+.2f}%)")
+        logger.info("")
+
+        # Explain which exit condition was met
+        logger.info(f"🧠 Exit Condition Analysis:")
+        if "Stop loss" in reason:
+            max_loss = position.cost_basis * (MAX_LOSS_PERCENT / 100)
+            logger.info(f"   💀 STOP LOSS HIT - Price fell below ${position.stop_loss_price:.6f}")
+            logger.info(f"   📉 Protected against larger loss (max risk: ${max_loss:.2f})")
+            logger.info(f"   🛡️ Risk management working as intended")
+        elif "Target profit" in reason:
+            logger.info(f"   🎯 TARGET PROFIT ACHIEVED - Price reached ${position.target_profit_price:.6f}")
+            logger.info(f"   ✅ Hit {TARGET_PROFIT}% profit target")
+            logger.info(f"   🎉 Clean win - strategy executed perfectly")
+        elif "Break-even exit" in reason:
+            logger.info(f"   ⚖️ BREAK-EVEN EXIT - Hit profit but price returned to entry")
+            logger.info(f"   📊 Peak was ${position.peak_price:.6f} ({peak_change_pct:+.2f}%)")
+            logger.info(f"   🛡️ Protected profit by exiting at break-even")
+        elif "Trailing stop" in reason:
+            logger.info(f"   📉 TRAILING STOP HIT - Price dropped {TRAILING_THRESHOLD}% from peak")
+            logger.info(f"   📊 Peak: ${position.peak_price:.6f}, Trailing: ${position.trailing_exit_price:.6f}")
+            logger.info(f"   ✅ Locked in profit of {pnl_data['pnl_percent']:+.2f}%")
+        elif "RSI overbought" in reason:
+            logger.info(f"   🌡️ RSI OVERBOUGHT SIGNAL - RSI > {RSI_OVERBOUGHT}")
+            if rsi:
+                logger.info(f"   📈 Final RSI: {rsi:.1f}")
+            logger.info(f"   💡 Momentum exhausted, took profit at {pnl_data['pnl_percent']:+.2f}%")
+        elif "SMA" in reason or "below" in reason.lower():
+            logger.info(f"   📉 PRICE BELOW SMA - Momentum turned negative")
+            if sma:
+                logger.info(f"   📊 Final SMA({SMA_PERIOD}): ${sma:.6f}")
+            logger.info(f"   💡 Trend weakening, exited at {pnl_data['pnl_percent']:+.2f}%")
+        elif "Max hold time" in reason:
+            logger.info(f"   ⏰ MAX HOLD TIME EXCEEDED - {holding_minutes:.1f} min > {MAX_HOLD_TIME_MINUTES} min")
+            logger.info(f"   🔄 Position stagnant, forced exit")
+            logger.info(f"   💡 Better to free capital for next opportunity")
+        elif "Volume dried up" in reason:
+            logger.info(f"   💧 VOLUME DRIED UP - Trading interest declined")
+            logger.info(f"   💡 Exited with profit before liquidity disappears")
+        elif "Min hold time" in reason:
+            logger.info(f"   ⏱️ MIN HOLD TIME REACHED - Released position after {holding_minutes:.1f} min")
+            logger.info(f"   💡 Held minimum time, exited with available profit")
+        else:
+            logger.info(f"   📋 Other: {reason}")
+        logger.info("")
+
+        # Performance rating
+        if pnl_data['pnl_percent'] >= TARGET_PROFIT:
+            rating = "🏆 EXCELLENT"
+        elif pnl_data['pnl_percent'] >= MIN_PROFIT_TARGET:
+            rating = "✅ GOOD"
+        elif pnl_data['pnl_percent'] > 0:
+            rating = "✓ PROFIT"
+        elif pnl_data['pnl_percent'] > -MAX_LOSS_PERCENT / 2:
+            rating = "⚠️ SMALL LOSS"
+        else:
+            rating = "❌ STOPPED OUT"
+
+        logger.info(f"📈 Trade Rating: {rating}")
+        logger.info(f"   Previous Capital: ${self.capital - pnl_data['net_proceeds']:.2f}")
+        logger.info(f"   New Capital: ${self.capital:.2f} ({((pnl_data['net_proceeds'] - position.cost_basis) / position.cost_basis * 100):+.2f}%)")
+        logger.info("")
+
+        # Strategy insights
+        logger.info(f"💡 Trade Insights:")
+        if pnl_data['pnl_percent'] >= TARGET_PROFIT:
+            logger.info(f"   ✓ Perfect execution - dump bounced as expected")
+        elif pnl_data['pnl_percent'] >= MIN_PROFIT_TARGET:
+            logger.info(f"   ✓ Strategy working - captured {MIN_PROFIT_TARGET}-{TARGET_PROFIT}% bounce")
+        elif pnl_data['pnl_percent'] > 0:
+            logger.info(f"   ✓ Small win - could have held longer but took profit")
+        else:
+            logger.info(f"   ✗ Dump continued - stop loss protected capital")
+            logger.info(f"   💡 Not all dumps bounce immediately - this is expected")
+
+        logger.info("=" * 80)
 
         # Record trade exit
         self._record_trade_exit(position, exit_price, pnl_data, reason)
