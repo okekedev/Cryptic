@@ -12,7 +12,8 @@
       "Bash(docker-compose logs:*)",
       "Bash(docker-compose exec backend ls:*)",
       "Bash(docker-compose exec backend head:*)",
-      "Bash(curl -X POST http://localhost:8080/webhook -H \"Content-Type: application/json\" -d '{\"\"symbol\"\":\"\"BTC-USD\"\",\"\"spike_type\"\":\"\"pump\"\",\"\"pct_change\"\":5.25,\"\"old_price\"\":60000.0,\"\"new_price\"\":63150.0,\"\"time_span_seconds\"\":300,\"\"timestamp\"\":\"\"2025-10-01T15:14:00\"\",\"\"spike_time\"\":\"\"2025-10-01T15:14:00\"\",\"\"event_type\"\":\"\"spike_start\"\"}')"
+      "Bash(curl -X POST http://localhost:8080/webhook -H \"Content-Type: application/json\" -d '{\"\"symbol\"\":\"\"BTC-USD\"\",\"\"spike_type\"\":\"\"pump\"\",\"\"pct_change\"\":5.25,\"\"old_price\"\":60000.0,\"\"new_price\"\":63150.0,\"\"time_span_seconds\"\":300,\"\"timestamp\"\":\"\"2025-10-01T15:14:00\"\",\"\"spike_time\"\":\"\"2025-10-01T15:14:00\"\",\"\"event_type\"\":\"\"spike_start\"\"}')",
+      "Bash(npm install:*)"
     ],
     "deny": [],
     "ask": []

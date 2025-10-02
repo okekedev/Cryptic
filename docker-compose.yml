@@ -90,32 +90,34 @@ services:
   #     - app-network
   #   restart: always
 
-  paper-trading:
-    build:
-      context: ./bots/paper-trading
-      dockerfile: Dockerfile
-    depends_on:
-      - backend
-      - spike-detector
-    volumes:
-      - ./data:/app/data
-    env_file:
-      - .env
-    environment:
-      - BACKEND_URL=http://backend:5000
-      - INITIAL_CAPITAL=${INITIAL_CAPITAL:-10000.0}
-      - POSITION_SIZE_PERCENT=${POSITION_SIZE_PERCENT:-10.0}
-      - MIN_PROFIT_TARGET=${MIN_PROFIT_TARGET:-3.0}
-      - TRAILING_THRESHOLD=${TRAILING_THRESHOLD:-1.5}
-      - MIN_HOLD_TIME_MINUTES=${MIN_HOLD_TIME_MINUTES:-30.0}
-      - STOP_LOSS_PERCENT=${STOP_LOSS_PERCENT:-5.0}
-      - BUY_FEE_PERCENT=${BUY_FEE_PERCENT:-0.6}
-      - SELL_FEE_PERCENT=${SELL_FEE_PERCENT:-0.4}
-      - DB_PATH=/app/data/paper_trading.db
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-    networks:
-      - app-network
-    restart: unless-stopped
+  # DISABLED: Paper trading bot (pump strategy) - not profitable
+  # Focus on dump-trading bot with optimized parameters instead
+  # paper-trading:
+  #   build:
+  #     context: ./bots/paper-trading
+  #     dockerfile: Dockerfile
+  #   depends_on:
+  #     - backend
+  #     - spike-detector
+  #   volumes:
+  #     - ./data:/app/data
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     - BACKEND_URL=http://backend:5000
+  #     - INITIAL_CAPITAL=${INITIAL_CAPITAL:-10000.0}
+  #     - POSITION_SIZE_PERCENT=${POSITION_SIZE_PERCENT:-10.0}
+  #     - MIN_PROFIT_TARGET=${MIN_PROFIT_TARGET:-3.0}
+  #     - TRAILING_THRESHOLD=${TRAILING_THRESHOLD:-1.5}
+  #     - MIN_HOLD_TIME_MINUTES=${MIN_HOLD_TIME_MINUTES:-30.0}
+  #     - STOP_LOSS_PERCENT=${STOP_LOSS_PERCENT:-5.0}
+  #     - BUY_FEE_PERCENT=${BUY_FEE_PERCENT:-0.6}
+  #     - SELL_FEE_PERCENT=${SELL_FEE_PERCENT:-0.4}
+  #     - DB_PATH=/app/data/paper_trading.db
+  #     - LOG_LEVEL=${LOG_LEVEL:-INFO}
+  #   networks:
+  #     - app-network
+  #   restart: unless-stopped
 
   dump-trading:
     build:
@@ -125,19 +127,25 @@ services:
     depends_on:
       - backend
       - spike-detector
+      - telegram-bot
     volumes:
       - ./data:/app/data
     env_file:
       - .env
     environment:
       - BACKEND_URL=http://backend:5000
-      - DUMP_INITIAL_CAPITAL=${DUMP_INITIAL_CAPITAL:-10000.0}
-      - DUMP_MAX_LOSS_PERCENT=${DUMP_MAX_LOSS_PERCENT:-2.0}
-      - DUMP_MIN_PROFIT_TARGET=${DUMP_MIN_PROFIT_TARGET:-1.0}
-      - DUMP_TARGET_PROFIT=${DUMP_TARGET_PROFIT:-3.0}
-      - DUMP_TRAILING_THRESHOLD=${DUMP_TRAILING_THRESHOLD:-0.5}
-      - DUMP_MIN_HOLD_TIME_MINUTES=${DUMP_MIN_HOLD_TIME_MINUTES:-5.0}
-      - DUMP_MAX_HOLD_TIME_MINUTES=${DUMP_MAX_HOLD_TIME_MINUTES:-15.0}
+      - TELEGRAM_WEBHOOK_URL=http://telegram-bot:8080/webhook
+      - AUTO_TRADE=${AUTO_TRADE:-no}  # Safety: Auto-trading disabled by default
+      - COINBASE_API_KEY=${COINBASE_API_KEY}
+      - COINBASE_SIGNING_KEY=${COINBASE_SIGNING_KEY}
+      - DUMP_POSITION_SIZE_PERCENT=${DUMP_POSITION_SIZE_PERCENT:-25.0}  # 25% per trade for 4 positions
+      - DUMP_MAX_CONCURRENT_POSITIONS=${DUMP_MAX_CONCURRENT_POSITIONS:-4}  # Allow up to 4 trades
+      - DUMP_MAX_LOSS_PERCENT=${DUMP_MAX_LOSS_PERCENT:-3.0}  # OPTIMIZED: Wider stop loss
+      - DUMP_MIN_PROFIT_TARGET=${DUMP_MIN_PROFIT_TARGET:-2.0}  # OPTIMIZED: Lower min profit
+      - DUMP_TARGET_PROFIT=${DUMP_TARGET_PROFIT:-4.0}  # OPTIMIZED: Realistic target
+      - DUMP_TRAILING_THRESHOLD=${DUMP_TRAILING_THRESHOLD:-0.7}  # OPTIMIZED: Wider trailing
+      - DUMP_MIN_HOLD_TIME_MINUTES=${DUMP_MIN_HOLD_TIME_MINUTES:-5.0}  # OPTIMIZED
+      - DUMP_MAX_HOLD_TIME_MINUTES=${DUMP_MAX_HOLD_TIME_MINUTES:-15.0}  # OPTIMIZED: Tighter max
       - VOLUME_SURGE_THRESHOLD=${VOLUME_SURGE_THRESHOLD:-1.5}
       - RSI_OVERBOUGHT=${RSI_OVERBOUGHT:-70.0}
       - SMA_PERIOD=${SMA_PERIOD:-5}

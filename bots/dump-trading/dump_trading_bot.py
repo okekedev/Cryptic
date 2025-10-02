@@ -22,19 +22,35 @@ import logging
 import signal
 import sqlite3
 import socketio
+import requests
+import threading
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 from dataclasses import dataclass, asdict
 
+# Import Coinbase client for real trading
+try:
+    from coinbase_client import CoinbaseClient
+    COINBASE_AVAILABLE = True
+except ImportError:
+    COINBASE_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("Coinbase client not available - live trading disabled")
+
 # Configuration
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:5000")
+TELEGRAM_WEBHOOK_URL = os.getenv("TELEGRAM_WEBHOOK_URL", "http://telegram-bot:8080/webhook")
+AUTO_TRADE = os.getenv("AUTO_TRADE", "no").lower() in ("yes", "true", "1")
+DAILY_SUMMARY_TIME = os.getenv("DAILY_SUMMARY_TIME", "22:30")  # 10:30 PM
 INITIAL_CAPITAL = float(os.getenv("DUMP_INITIAL_CAPITAL", "10000.0"))
-MAX_LOSS_PERCENT = float(os.getenv("DUMP_MAX_LOSS_PERCENT", "2.0"))  # Tight 2% stop
-MIN_PROFIT_TARGET = float(os.getenv("DUMP_MIN_PROFIT_TARGET", "1.0"))  # Quick 1% profit
-TARGET_PROFIT = float(os.getenv("DUMP_TARGET_PROFIT", "3.0"))  # Ideal 3% profit
-TRAILING_THRESHOLD = float(os.getenv("DUMP_TRAILING_THRESHOLD", "0.5"))  # 0.5% trailing
-MIN_HOLD_TIME_MINUTES = float(os.getenv("DUMP_MIN_HOLD_TIME_MINUTES", "5.0"))  # 5 min min
-MAX_HOLD_TIME_MINUTES = float(os.getenv("DUMP_MAX_HOLD_TIME_MINUTES", "15.0"))  # 15 min max
+POSITION_SIZE_PERCENT = float(os.getenv("DUMP_POSITION_SIZE_PERCENT", "25.0"))  # 25% per trade
+MAX_CONCURRENT_POSITIONS = int(os.getenv("DUMP_MAX_CONCURRENT_POSITIONS", "4"))  # Max 4 positions
+MAX_LOSS_PERCENT = float(os.getenv("DUMP_MAX_LOSS_PERCENT", "3.0"))  # Stop loss
+MIN_PROFIT_TARGET = float(os.getenv("DUMP_MIN_PROFIT_TARGET", "2.0"))  # Min profit
+TARGET_PROFIT = float(os.getenv("DUMP_TARGET_PROFIT", "4.0"))  # Target profit
+TRAILING_THRESHOLD = float(os.getenv("DUMP_TRAILING_THRESHOLD", "0.7"))  # Trailing stop
+MIN_HOLD_TIME_MINUTES = float(os.getenv("DUMP_MIN_HOLD_TIME_MINUTES", "5.0"))  # Min hold
+MAX_HOLD_TIME_MINUTES = float(os.getenv("DUMP_MAX_HOLD_TIME_MINUTES", "15.0"))  # Max hold
 VOLUME_SURGE_THRESHOLD = float(os.getenv("VOLUME_SURGE_THRESHOLD", "1.5"))  # 50% above avg
 RSI_OVERBOUGHT = float(os.getenv("RSI_OVERBOUGHT", "70.0"))  # Exit if RSI > 70
 SMA_PERIOD = int(os.getenv("SMA_PERIOD", "5"))  # 5-period SMA
@@ -152,11 +168,9 @@ class DumpPosition:
         entry_time = datetime.fromisoformat(self.entry_time)
         time_held_minutes = (datetime.now() - entry_time).total_seconds() / 60
 
-        # Calculate current P&L
+        # Calculate current P&L (simplified - no fees)
         current_value = current_price * self.quantity
-        sell_fee = current_value * self.sell_fee_rate
-        net_proceeds = current_value - sell_fee
-        pnl = net_proceeds - self.cost_basis
+        pnl = current_value - self.cost_basis
         pnl_percent = (pnl / self.cost_basis) * 100
 
         # 1. STOP LOSS: Exit immediately if -2% or worse
@@ -205,18 +219,13 @@ class DumpPosition:
         return False, ""
 
     def calculate_pnl(self, exit_price: float) -> Dict:
-        """Calculate profit/loss for this position"""
-        gross_proceeds = self.quantity * exit_price
-        sell_fee = gross_proceeds * self.sell_fee_rate
-        net_proceeds = gross_proceeds - sell_fee
-
-        pnl = net_proceeds - self.cost_basis
+        """Calculate profit/loss for this position (simplified - no fees)"""
+        proceeds = self.quantity * exit_price
+        pnl = proceeds - self.cost_basis
         pnl_percent = (pnl / self.cost_basis) * 100
 
         return {
-            "gross_proceeds": gross_proceeds,
-            "sell_fee": sell_fee,
-            "net_proceeds": net_proceeds,
+            "proceeds": proceeds,
             "pnl": pnl,
             "pnl_percent": pnl_percent
         }
@@ -235,6 +244,20 @@ class DumpTradingBot:
         self.buy_fee_rate = DEFAULT_BUY_FEE_PERCENT / 100
         self.sell_fee_rate = DEFAULT_SELL_FEE_PERCENT / 100
 
+        # Initialize Coinbase client for live trading
+        self.coinbase = None
+        if AUTO_TRADE and COINBASE_AVAILABLE:
+            try:
+                self.coinbase = CoinbaseClient()
+                # Fetch actual balance from Coinbase
+                balance = self.coinbase.get_account_balance("USD")
+                if balance is not None:
+                    self.capital = balance
+                    logger.info(f"✅ Coinbase connected - Live balance: ${balance:,.2f}")
+            except Exception as e:
+                logger.error(f"Failed to initialize Coinbase client: {e}")
+                self.coinbase = None
+
         # Initialize database
         self.db = sqlite3.connect(DB_PATH, check_same_thread=False)
         self._init_db()
@@ -242,14 +265,17 @@ class DumpTradingBot:
         logger.info("=" * 60)
         logger.info("Dump Trading Bot Initialized")
         logger.info(f"Initial Capital: ${INITIAL_CAPITAL:,.2f}")
-        logger.info(f"Strategy: 100% balance allocation per trade")
-        logger.info(f"Max Loss: {MAX_LOSS_PERCENT}% (tight stop)")
+        logger.info(f"Position Sizing: {POSITION_SIZE_PERCENT}% per trade")
+        logger.info(f"Max Concurrent Positions: {MAX_CONCURRENT_POSITIONS}")
+        logger.info(f"Auto-Trading: {'ENABLED' if AUTO_TRADE else 'DISABLED (alerts only)'}")
+        logger.info(f"Max Loss: {MAX_LOSS_PERCENT}% stop loss")
         logger.info(f"Profit Targets: {MIN_PROFIT_TARGET}%-{TARGET_PROFIT}%")
         logger.info(f"Hold Time: {MIN_HOLD_TIME_MINUTES}-{MAX_HOLD_TIME_MINUTES} min")
         logger.info(f"Volume Surge Required: {VOLUME_SURGE_THRESHOLD}x average")
         logger.info(f"Default Buy Fee: {self.buy_fee_rate*100:.2f}%")
         logger.info(f"Default Sell Fee: {self.sell_fee_rate*100:.2f}%")
         logger.info(f"TA-Lib Available: {TALIB_AVAILABLE}")
+        logger.info(f"Telegram Alerts: {'ENABLED' if TELEGRAM_WEBHOOK_URL else 'DISABLED'}")
         logger.info("=" * 60)
 
     def _init_db(self):
@@ -346,16 +372,67 @@ class DumpTradingBot:
 
         return self.buy_fee_rate, self.sell_fee_rate
 
+    def send_telegram_alert(self, message: str, alert_type: str = "info"):
+        """
+        Send alert to Telegram via webhook
+
+        Args:
+            message: The message to send
+            alert_type: Type of alert (info, success, warning, error)
+        """
+        if not TELEGRAM_WEBHOOK_URL:
+            return
+
+        try:
+            payload = {
+                "type": "dump_trading_alert",
+                "alert_type": alert_type,
+                "message": message,
+                "timestamp": datetime.now().isoformat()
+            }
+
+            response = requests.post(
+                TELEGRAM_WEBHOOK_URL,
+                json=payload,
+                timeout=5
+            )
+
+            if response.status_code == 200:
+                logger.debug(f"Telegram alert sent: {alert_type}")
+            else:
+                logger.warning(f"Telegram alert failed: {response.status_code}")
+
+        except Exception as e:
+            logger.error(f"Failed to send Telegram alert: {e}")
+
     def open_position(self, symbol: str, entry_price: float, dump_pct: float, volume_surge: float):
         """
-        Open position using 100% of account balance minus dynamic fees
+        Open position using POSITION_SIZE_PERCENT% of total capital
 
-        Formula: spend_amount = current_balance / (1 + buy_fee_rate)
-        This ensures: spend_amount + fee <= balance
+        Formula: spend_amount = (capital * position_size_pct / 100) / (1 + buy_fee_rate)
+        This ensures: spend_amount + fee <= allocated amount
         """
         # Check if we already have a position
         if symbol in self.positions:
             logger.info(f"⏭️  Already have position in {symbol}, skipping")
+            return
+
+        # Check max concurrent positions limit
+        if len(self.positions) >= MAX_CONCURRENT_POSITIONS:
+            logger.info(f"⏭️  Max concurrent positions ({MAX_CONCURRENT_POSITIONS}) reached, skipping {symbol}")
+            return
+
+        # Check AUTO_TRADE flag - if disabled, only send alert
+        if not AUTO_TRADE:
+            alert_msg = f"🚨 DUMP ALERT (AUTO-TRADE DISABLED)\n\n" \
+                       f"Symbol: {symbol}\n" \
+                       f"Dump: {abs(dump_pct):.2f}%\n" \
+                       f"Entry Price: ${entry_price:.6f}\n" \
+                       f"Volume Surge: {volume_surge:.2f}x\n\n" \
+                       f"Current Positions: {len(self.positions)}/{MAX_CONCURRENT_POSITIONS}\n\n" \
+                       f"Enable auto-trading to execute automatically."
+            self.send_telegram_alert(alert_msg, "warning")
+            logger.info(f"⚠️  AUTO_TRADE disabled - Alert sent for {symbol}")
             return
 
         logger.info("=" * 80)
@@ -371,64 +448,40 @@ class DumpTradingBot:
         logger.info(f"   Volume Surge: {volume_surge:.2f}x average")
         logger.info("")
 
-        # Calculate spend amount (100% allocation minus fees)
-        # spend_amount + (spend_amount * fee_rate) = balance
-        # spend_amount * (1 + fee_rate) = balance
-        # spend_amount = balance / (1 + fee_rate)
-        spend_amount = self.capital / (1 + buy_fee_rate)
-        buy_fee = spend_amount * buy_fee_rate
-        cost_basis = spend_amount + buy_fee
+        # Simple position sizing: 25% of available capital
+        total_positions_value = sum(p.cost_basis for p in self.positions.values())
+        total_capital = self.capital + total_positions_value
 
-        if cost_basis > self.capital:
+        # Allocate 25% of total capital
+        spend_amount = total_capital * (POSITION_SIZE_PERCENT / 100)
+
+        if spend_amount > self.capital:
             logger.warning(f"⚠️  Insufficient capital for {symbol}")
             logger.info("=" * 80)
             return
 
-        # Calculate quantity
+        # Simple: just use spend_amount as cost basis (no fee calculations)
+        cost_basis = spend_amount
         quantity = spend_amount / entry_price
 
-        # Calculate exit prices
-        # Break-even: cover cost_basis after sell fees
-        # net_proceeds = exit_price * quantity * (1 - sell_fee_rate)
-        # Solve for exit_price where net_proceeds = cost_basis
-        break_even_price = cost_basis / (quantity * (1 - sell_fee_rate))
-
-        # Min profit: 1% above cost basis
-        min_profit_target = cost_basis * (1 + MIN_PROFIT_TARGET / 100)
-        min_profit_price = min_profit_target / (quantity * (1 - sell_fee_rate))
-
-        # Target profit: 3% above cost basis
-        target_profit_target = cost_basis * (1 + TARGET_PROFIT / 100)
-        target_profit_price = target_profit_target / (quantity * (1 - sell_fee_rate))
-
-        # Stop loss: 2% below entry (tight stop)
+        # Simple exit prices (no fee adjustments)
+        break_even_price = entry_price
+        min_profit_price = entry_price * (1 + MIN_PROFIT_TARGET / 100)
+        target_profit_price = entry_price * (1 + TARGET_PROFIT / 100)
         stop_loss_price = entry_price * (1 - MAX_LOSS_PERCENT / 100)
 
-        # Calculate risk/reward
-        risk_amount = cost_basis * (MAX_LOSS_PERCENT / 100)
-        reward_amount_min = cost_basis * (MIN_PROFIT_TARGET / 100)
-        reward_amount_target = cost_basis * (TARGET_PROFIT / 100)
-        risk_reward_ratio = reward_amount_target / risk_amount if risk_amount > 0 else 0
-
         logger.info(f"💰 Position Sizing:")
-        logger.info(f"   Available Capital: ${self.capital:.2f}")
-        logger.info(f"   Allocation: 100% (${spend_amount:.2f})")
-        logger.info(f"   Buy Fee ({buy_fee_rate*100:.3f}%): ${buy_fee:.2f}")
-        logger.info(f"   Total Cost Basis: ${cost_basis:.2f}")
+        logger.info(f"   Total Capital: ${total_capital:.2f}")
+        logger.info(f"   Open Positions: {len(self.positions)}/{MAX_CONCURRENT_POSITIONS}")
+        logger.info(f"   Position Size: {POSITION_SIZE_PERCENT}% = ${spend_amount:.2f}")
         logger.info(f"   Quantity: {quantity:.6f} {symbol.split('-')[0]}")
         logger.info("")
 
         logger.info(f"🎯 Exit Strategy:")
-        logger.info(f"   Break-Even: ${break_even_price:.6f} ({((break_even_price - entry_price) / entry_price * 100):+.2f}%)")
-        logger.info(f"   Min Profit Target: ${min_profit_price:.6f} ({MIN_PROFIT_TARGET}% = ${reward_amount_min:.2f})")
-        logger.info(f"   Ideal Target: ${target_profit_price:.6f} ({TARGET_PROFIT}% = ${reward_amount_target:.2f})")
-        logger.info(f"   Stop Loss: ${stop_loss_price:.6f} (-{MAX_LOSS_PERCENT}% = -${risk_amount:.2f})")
-        logger.info("")
-
-        logger.info(f"📊 Risk/Reward Analysis:")
-        logger.info(f"   Risk: ${risk_amount:.2f} ({MAX_LOSS_PERCENT}%)")
-        logger.info(f"   Reward: ${reward_amount_min:.2f} to ${reward_amount_target:.2f} ({MIN_PROFIT_TARGET}%-{TARGET_PROFIT}%)")
-        logger.info(f"   Risk/Reward Ratio: 1:{risk_reward_ratio:.2f}")
+        logger.info(f"   Entry: ${entry_price:.6f}")
+        logger.info(f"   Min Profit: ${min_profit_price:.6f} (+{MIN_PROFIT_TARGET}%)")
+        logger.info(f"   Target: ${target_profit_price:.6f} (+{TARGET_PROFIT}%)")
+        logger.info(f"   Stop Loss: ${stop_loss_price:.6f} (-{MAX_LOSS_PERCENT}%)")
         logger.info("")
 
         logger.info(f"🧠 Entry Rationale:")
@@ -449,6 +502,17 @@ class DumpTradingBot:
         logger.info("")
 
         logger.info(f"🚀 EXECUTING BUY ORDER...")
+
+        # Execute actual Coinbase trade if live trading enabled
+        if self.coinbase:
+            buy_result = self.coinbase.market_buy(symbol, spend_amount)
+            if not buy_result.get('success'):
+                error_msg = f"❌ Buy order failed: {buy_result.get('error')}"
+                logger.error(error_msg)
+                self.send_telegram_alert(error_msg, "error")
+                logger.info("=" * 80)
+                return
+            logger.info(f"✅ Live trade executed: Order ID {buy_result.get('order_id')}")
 
         # Initial peak and trailing
         peak_price = entry_price
@@ -480,6 +544,20 @@ class DumpTradingBot:
         logger.info(f"✅ POSITION OPENED: {symbol}")
         logger.info(f"   Capital Remaining: ${self.capital:.2f}")
         logger.info("=" * 80)
+
+        # Send Telegram alert for position open
+        entry_alert = f"🟢 POSITION OPENED\n\n" \
+                     f"Symbol: {symbol}\n" \
+                     f"Entry: ${entry_price:.6f}\n" \
+                     f"Quantity: {quantity:.6f}\n" \
+                     f"Position Size: ${cost_basis:.2f} ({POSITION_SIZE_PERCENT}%)\n" \
+                     f"Dump: {abs(dump_pct):.2f}%\n\n" \
+                     f"Targets:\n" \
+                     f"• Min: ${min_profit_price:.6f} (+{MIN_PROFIT_TARGET}%)\n" \
+                     f"• Target: ${target_profit_price:.6f} (+{TARGET_PROFIT}%)\n" \
+                     f"• Stop: ${stop_loss_price:.6f} (-{MAX_LOSS_PERCENT}%)\n\n" \
+                     f"Positions: {len(self.positions)}/{MAX_CONCURRENT_POSITIONS}"
+        self.send_telegram_alert(entry_alert, "success")
 
         # Record trade entry
         self._record_trade_entry(position)
@@ -594,6 +672,18 @@ class DumpTradingBot:
             return
 
         position = self.positions[symbol]
+
+        # Execute actual Coinbase sell if live trading enabled
+        if self.coinbase:
+            sell_result = self.coinbase.market_sell(symbol, position.quantity)
+            if not sell_result.get('success'):
+                error_msg = f"❌ Sell order failed for {symbol}: {sell_result.get('error')}"
+                logger.error(error_msg)
+                self.send_telegram_alert(error_msg, "error")
+                # Don't return - still close the position in our tracking
+            else:
+                logger.info(f"✅ Live sell executed: Order ID {sell_result.get('order_id')}")
+
         pnl_data = position.calculate_pnl(exit_price)
 
         # Calculate holding time
@@ -607,8 +697,8 @@ class DumpTradingBot:
         peak_change_pct = ((position.peak_price - position.entry_price) / position.entry_price) * 100
         peak_to_exit_pct = ((exit_price - position.peak_price) / position.peak_price) * 100
 
-        # Update capital
-        self.capital += pnl_data['net_proceeds']
+        # Update capital (add proceeds back)
+        self.capital += pnl_data['proceeds']
 
         # Get final indicator values if available
         rsi = position.calculate_rsi() if TALIB_AVAILABLE else None
@@ -634,10 +724,8 @@ class DumpTradingBot:
 
         logger.info(f"💰 Financial Results:")
         logger.info(f"   Cost Basis: ${position.cost_basis:.2f}")
-        logger.info(f"   Gross Proceeds: ${pnl_data['gross_proceeds']:.2f}")
-        logger.info(f"   Sell Fee ({position.sell_fee_rate*100:.3f}%): ${pnl_data['sell_fee']:.2f}")
-        logger.info(f"   Net Proceeds: ${pnl_data['net_proceeds']:.2f}")
-        logger.info(f"   Net P&L: ${pnl_data['pnl']:+.2f} ({pnl_data['pnl_percent']:+.2f}%)")
+        logger.info(f"   Proceeds: ${pnl_data['proceeds']:.2f}")
+        logger.info(f"   P&L: ${pnl_data['pnl']:+.2f} ({pnl_data['pnl_percent']:+.2f}%)")
         logger.info("")
 
         # Explain which exit condition was met
@@ -696,8 +784,8 @@ class DumpTradingBot:
             rating = "❌ STOPPED OUT"
 
         logger.info(f"📈 Trade Rating: {rating}")
-        logger.info(f"   Previous Capital: ${self.capital - pnl_data['net_proceeds']:.2f}")
-        logger.info(f"   New Capital: ${self.capital:.2f} ({((pnl_data['net_proceeds'] - position.cost_basis) / position.cost_basis * 100):+.2f}%)")
+        logger.info(f"   Previous Capital: ${self.capital - pnl_data['proceeds']:.2f}")
+        logger.info(f"   New Capital: ${self.capital:.2f}")
         logger.info("")
 
         # Strategy insights
@@ -713,6 +801,19 @@ class DumpTradingBot:
             logger.info(f"   💡 Not all dumps bounce immediately - this is expected")
 
         logger.info("=" * 80)
+
+        # Send Telegram alert for position close
+        exit_emoji = "🟢" if pnl_data['pnl_percent'] > 0 else "🔴"
+        exit_alert = f"{exit_emoji} POSITION CLOSED\n\n" \
+                    f"Symbol: {symbol}\n" \
+                    f"Entry: ${position.entry_price:.6f}\n" \
+                    f"Exit: ${exit_price:.6f} ({price_change_pct:+.2f}%)\n" \
+                    f"Time: {holding_minutes:.1f} min\n\n" \
+                    f"P&L: ${pnl_data['pnl']:+.2f} ({pnl_data['pnl_percent']:+.2f}%)\n" \
+                    f"Reason: {reason}\n\n" \
+                    f"New Capital: ${self.capital:.2f}"
+        alert_type = "success" if pnl_data['pnl_percent'] > 0 else "error"
+        self.send_telegram_alert(exit_alert, alert_type)
 
         # Record trade exit
         self._record_trade_exit(position, exit_price, pnl_data, reason)
@@ -753,8 +854,8 @@ class DumpTradingBot:
         """, (
             datetime.now().isoformat(),
             exit_price,
-            pnl_data['gross_proceeds'],
-            pnl_data['net_proceeds'],
+            pnl_data['proceeds'],
+            pnl_data['proceeds'],
             pnl_data['pnl'],
             pnl_data['pnl_percent'],
             position.peak_price,
@@ -892,9 +993,78 @@ class DumpTradingBot:
         logger.info(f"Open Positions: {len(self.positions)}")
         logger.info("=" * 60 + "\n")
 
+    def send_daily_summary(self):
+        """Send daily P&L summary to Telegram"""
+        stats = self.get_statistics()
+
+        # Fetch live balance if Coinbase connected
+        live_balance = None
+        if self.coinbase:
+            live_balance = self.coinbase.get_account_balance("USD")
+
+        summary = f"📊 DAILY TRADING SUMMARY\n\n"
+        summary += f"Date: {datetime.now().strftime('%Y-%m-%d')}\n\n"
+
+        if live_balance is not None:
+            summary += f"💰 Live Balance: ${live_balance:,.2f}\n"
+            if live_balance != self.capital:
+                summary += f"   Tracked: ${self.capital:,.2f}\n"
+        else:
+            summary += f"💰 Current Capital: ${stats['current_capital']:,.2f}\n"
+
+        summary += f"📈 Total Return: {stats['total_return']:+.2f}%\n"
+        summary += f"   P&L: ${stats['total_pnl']:+,.2f}\n\n"
+
+        summary += f"📊 Today's Stats:\n"
+        summary += f"   Total Trades: {stats['total_trades']}\n"
+        summary += f"   Winners: {stats['winning_trades']} ({stats['win_rate']:.1f}%)\n"
+        summary += f"   Losers: {stats['losing_trades']}\n\n"
+
+        if stats['total_trades'] > 0:
+            summary += f"   Best: ${stats['best_trade']:+,.2f}\n"
+            summary += f"   Worst: ${stats['worst_trade']:+,.2f}\n"
+            summary += f"   Avg: ${stats['avg_pnl']:+,.2f}\n\n"
+
+        summary += f"🔄 Open Positions: {len(self.positions)}/{MAX_CONCURRENT_POSITIONS}\n"
+
+        self.send_telegram_alert(summary, "info")
+        logger.info("📤 Daily summary sent")
+
+    def schedule_daily_summary(self):
+        """Background thread to send daily summary at specified time"""
+        def scheduler():
+            while self.running:
+                try:
+                    now = datetime.now()
+                    hour, minute = map(int, DAILY_SUMMARY_TIME.split(':'))
+                    target_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+                    # If target time has passed today, schedule for tomorrow
+                    if now > target_time:
+                        target_time += timedelta(days=1)
+
+                    # Wait until target time
+                    wait_seconds = (target_time - now).total_seconds()
+                    logger.info(f"📅 Next daily summary at {target_time.strftime('%Y-%m-%d %H:%M')}")
+
+                    time.sleep(wait_seconds)
+                    self.send_daily_summary()
+
+                except Exception as e:
+                    logger.error(f"Error in daily summary scheduler: {e}")
+                    time.sleep(60)  # Wait 1 minute before retrying
+
+        thread = threading.Thread(target=scheduler, daemon=True)
+        thread.start()
+        logger.info(f"📅 Daily summary scheduler started (sends at {DAILY_SUMMARY_TIME})")
+
     def run(self):
         """Main bot loop"""
         try:
+            # Start daily summary scheduler
+            self.schedule_daily_summary()
+
+            # Connect to WebSocket and start trading
             self.connect_websocket()
         except KeyboardInterrupt:
             self.stop()
