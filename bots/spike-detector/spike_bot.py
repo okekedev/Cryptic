@@ -170,10 +170,11 @@ class PriceTracker:
             return None
             
         pct_change = ((newest_price - oldest_price) / oldest_price) * 100
-        
-        if abs(pct_change) >= self.threshold and (timestamp - self.last_spike_time) > self.cooldown_seconds:
+
+        # ONLY DETECT DUMPS (negative price changes) - ignore pumps
+        if pct_change <= -self.threshold and (timestamp - self.last_spike_time) > self.cooldown_seconds:
             self.last_spike_time = timestamp
-            
+
             # Start momentum tracking
             self.momentum_tracking = True
             self.momentum_start_price = oldest_price
@@ -181,7 +182,7 @@ class PriceTracker:
             self.momentum_start_time = timestamp
             self.momentum_peak_time = timestamp
             self.peak_change = pct_change
-            
+
             # TODO: If this is a DUMP, initiate dump recovery tracking
             # if pct_change < 0:  # Dump detected
             #     self.dump_recovery_tracking = True
@@ -193,7 +194,7 @@ class PriceTracker:
 
             return {
                 "symbol": self.symbol,
-                "spike_type": "pump" if pct_change > 0 else "dump",
+                "spike_type": "dump",
                 "pct_change": pct_change,
                 "old_price": oldest_price,
                 "new_price": newest_price,

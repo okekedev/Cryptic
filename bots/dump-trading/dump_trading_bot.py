@@ -484,6 +484,9 @@ class DumpTradingBot:
         logger.info(f"   Stop Loss: ${stop_loss_price:.6f} (-{MAX_LOSS_PERCENT}%)")
         logger.info("")
 
+        # Calculate risk/reward ratio
+        risk_reward_ratio = TARGET_PROFIT / MAX_LOSS_PERCENT
+
         logger.info(f"🧠 Entry Rationale:")
         logger.info(f"   ✓ Significant dump detected ({abs(dump_pct):.2f}% drop)")
         logger.info(f"   ✓ Mean reversion strategy - expecting bounce")

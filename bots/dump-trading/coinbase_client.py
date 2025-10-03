@@ -130,6 +130,9 @@ class CoinbaseClient:
             Dict with success status and order details
         """
         try:
+            # Round to 2 decimal places for Coinbase precision requirements
+            usd_amount = round(usd_amount, 2)
+
             client_order_id = f"dump_buy_{product_id}_{int(datetime.now().timestamp())}"
 
             order_data = {
@@ -150,14 +153,21 @@ class CoinbaseClient:
                 logger.error(f"Buy order failed: {response['error']}")
                 return {'success': False, 'error': response['error']}
 
-            # Extract order_id
+            # Log the actual response for debugging
+            logger.info(f"Coinbase API response: {response}")
+
+            # Extract order_id - match working telegram bot implementation
             order_id = None
             if response.get('success') and 'success_response' in response:
                 order_id = response['success_response'].get('order_id')
-            else:
+                logger.info(f"Extracted order_id from success_response: {order_id}")
+
+            if not order_id:
                 order_id = response.get('order_id', 'unknown')
+                logger.info(f"Fallback order_id from root: {order_id}")
 
             if order_id == 'unknown' or not order_id:
+                logger.error(f"Could not extract order_id. Response keys: {list(response.keys())}")
                 return {
                     'success': False,
                     'error': 'Could not extract order_id',
@@ -208,14 +218,21 @@ class CoinbaseClient:
                 logger.error(f"Sell order failed: {response['error']}")
                 return {'success': False, 'error': response['error']}
 
-            # Extract order_id
+            # Log the actual response for debugging
+            logger.info(f"Coinbase API response: {response}")
+
+            # Extract order_id - match working telegram bot implementation
             order_id = None
             if response.get('success') and 'success_response' in response:
                 order_id = response['success_response'].get('order_id')
-            else:
+                logger.info(f"Extracted order_id from success_response: {order_id}")
+
+            if not order_id:
                 order_id = response.get('order_id', 'unknown')
+                logger.info(f"Fallback order_id from root: {order_id}")
 
             if order_id == 'unknown' or not order_id:
+                logger.error(f"Could not extract order_id. Response keys: {list(response.keys())}")
                 return {
                     'success': False,
                     'error': 'Could not extract order_id',

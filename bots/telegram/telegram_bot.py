@@ -300,7 +300,7 @@ def format_price_alert(data):
             f"{timestamp_str}"
         ), None
     else:
-        # All other spike alerts (pump/dump) - include trading buttons
+        # All other spike alerts (pump/dump) - no buttons
         message = (
             f"{emoji} *PRICE {data['spike_type'].upper()} ALERT* {emoji}\n\n"
             f"*Symbol:* {data['symbol']}\n"
@@ -310,21 +310,7 @@ def format_price_alert(data):
             f"{timestamp_str}"
         )
 
-        # Create inline keyboard for all pump/dump alerts
-        chart_url = f"https://www.coinbase.com/advanced-trade/spot/{data['symbol']}"
-        keyboard = [
-            [
-                InlineKeyboardButton("🚀 Buy", callback_data=f"buy:{data['symbol']}"),
-                InlineKeyboardButton("📊 Chart", url=chart_url)
-            ],
-            [
-                InlineKeyboardButton("🔄 Refresh Price", callback_data=f"refresh_alert:{data['symbol']}"),
-                InlineKeyboardButton("👁️ Ignore", callback_data=f"ignore:{data['symbol']}")
-            ]
-        ]
-
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        return message, reply_markup
+        return message, None
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

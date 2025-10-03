@@ -301,8 +301,7 @@ class PriceMonitor:
                 chat_id=msg_info['chat_id'],
                 message_id=msg_info['message_id'],
                 text=message,
-                parse_mode='Markdown',
-                reply_markup=self._get_position_keyboard(product_id)
+                parse_mode='Markdown'
             )
 
         except Exception as e:
