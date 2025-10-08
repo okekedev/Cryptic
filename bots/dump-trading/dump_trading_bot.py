@@ -977,6 +977,12 @@ class DumpTradingBot:
                     # Update entry_price to actual fill price
                     position.entry_price = position.limit_buy_price
 
+                    # Update quantity to actual filled amount (after fees)
+                    actual_filled = status_result.get('filled_size', 0)
+                    if actual_filled > 0:
+                        position.quantity = actual_filled
+                        logger.info(f"📊 Actual filled quantity (after fees): {actual_filled}")
+
                     # Recalculate all exit prices based on actual fill
                     position.break_even_price = position.entry_price
                     position.min_profit_price = position.entry_price * (1 + MIN_PROFIT_TARGET / 100)
