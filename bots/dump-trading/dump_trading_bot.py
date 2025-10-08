@@ -1203,15 +1203,12 @@ class DumpTradingBot:
                         minutes_elapsed = (datetime.now() - order_placed).total_seconds() / 60
 
                         # Dynamic timeout based on profit level
-                        # Above +2%: 1 minute per level
-                        # At +2%: 2 minutes
-                        # Below +2%: 3 minutes per level
-                        if position.ladder_current_percent > 2.0:
+                        # Above +3%: 1 minute per level (fast exit at good profits)
+                        # At/below +3%: 2 minutes per level (more patient near minimum)
+                        if position.ladder_current_percent > 3.0:
                             timeout_minutes = 1.0
-                        elif position.ladder_current_percent == 2.0:
-                            timeout_minutes = 2.0
                         else:
-                            timeout_minutes = 3.0
+                            timeout_minutes = 2.0
 
                         # Check if ladder timeout reached
                         if minutes_elapsed >= timeout_minutes:
