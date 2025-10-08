@@ -213,9 +213,12 @@ class CoinbaseClient:
             Dict with success status and order details
         """
         try:
-            # Round base_amount to 8 decimal places to avoid INVALID_SIZE_PRECISION error
-            # Coinbase requires specific decimal precision per product
-            base_amount_rounded = round(base_amount, 8)
+            # Get product details to determine correct precision
+            product_details = self.get_product_details(product_id)
+            base_increment = product_details.get('base_increment', 0.01)
+
+            # Round to product's base_increment
+            base_amount_rounded = self._round_to_increment(base_amount, base_increment)
 
             client_order_id = f"dump_sell_{product_id}_{int(datetime.now().timestamp())}"
 
@@ -230,7 +233,7 @@ class CoinbaseClient:
                 }
             }
 
-            logger.info(f"Placing market SELL: {base_amount_rounded:.8f} of {product_id}")
+            logger.info(f"Placing market SELL: {base_amount_rounded} of {product_id}")
             response = self._make_request('POST', '/api/v3/brokerage/orders', json_data=order_data)
 
             if 'error' in response:
