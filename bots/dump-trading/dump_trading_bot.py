@@ -61,6 +61,24 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 DEFAULT_BUY_FEE_PERCENT = float(os.getenv("DEFAULT_BUY_FEE_PERCENT", "0.6"))
 DEFAULT_SELL_FEE_PERCENT = float(os.getenv("DEFAULT_SELL_FEE_PERCENT", "0.4"))
 
+# Limit order strategy
+USE_LIMIT_ORDERS = os.getenv("USE_LIMIT_ORDERS", "yes").lower() in ("yes", "true", "1")
+DUMP_LIMIT_BUY_EXTRA = float(os.getenv("LIMIT_BUY_EXTRA_PCT", "1.0"))  # Buy 1% lower than alert (LEGACY - replaced by ladder)
+LIMIT_ORDER_TIMEOUT_MINUTES = float(os.getenv("LIMIT_ORDER_TIMEOUT_MINUTES", "2.0"))  # Cancel timeout (LEGACY)
+
+# Ladder-up buy strategy (try to get better entry price)
+USE_LADDER_BUYS = os.getenv("USE_LADDER_BUYS", "yes").lower() in ("yes", "true", "1")
+LADDER_BUY_LEVELS = [-3.0, -2.0, -1.0, -0.5, -0.25]  # % below alert price
+LADDER_BUY_TIMEOUT_SECONDS = 30.0  # 30 seconds per level for first 4
+LADDER_BUY_FINAL_TIMEOUT_MINUTES = 2.0  # 2 minutes at final -0.25% level
+
+# Ladder-down sell strategy
+USE_LADDER_SELLS = os.getenv("USE_LADDER_SELLS", "no").lower() in ("yes", "true", "1")
+LADDER_START_PERCENT = float(os.getenv("LADDER_START_PERCENT", "8.0"))  # Start at +8%
+LADDER_STEP_PERCENT = float(os.getenv("LADDER_STEP_PERCENT", "1.0"))  # Step down 1%
+LADDER_TIMEOUT_MINUTES = float(os.getenv("LADDER_TIMEOUT_MINUTES", "2.0"))  # Time per level
+LADDER_MIN_PERCENT = float(os.getenv("LADDER_MIN_PERCENT", "1.0"))  # Minimum profit level
+
 # Configure logging
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL),
@@ -101,7 +119,23 @@ class DumpPosition:
     trailing_exit_price: float  # Trailing stop
     dump_pct: float  # Size of dump that triggered entry
     volume_surge: float  # Volume surge ratio at entry
-    status: str = "open"  # open, closed
+    status: str = "open"  # open, closed, pending_buy, pending_sell
+
+    # Limit order tracking
+    buy_order_id: str = None  # Order ID for limit buy
+    sell_order_id: str = None  # Order ID for limit sell
+    order_placed_time: str = None  # When limit order was placed
+    limit_buy_price: float = None  # Price of limit buy order
+    limit_sell_price: float = None  # Price of limit sell order
+
+    # Ladder-up buy tracking
+    alert_price: float = None  # Original alert price (for ladder buy calculations)
+    ladder_buy_level_index: int = 0  # Current index in LADDER_BUY_LEVELS
+    ladder_buy_order_time: str = None  # When current buy ladder order was placed
+
+    # Ladder-down sell tracking
+    ladder_current_percent: float = None  # Current ladder profit level
+    ladder_order_time: str = None  # When current ladder order was placed
 
     # Price history for indicator calculation
     price_history: list = None
@@ -249,11 +283,18 @@ class DumpTradingBot:
         if AUTO_TRADE and COINBASE_AVAILABLE:
             try:
                 self.coinbase = CoinbaseClient()
-                # Fetch actual balance from Coinbase
+                # Try to fetch actual balance from Coinbase
                 balance = self.coinbase.get_account_balance("USD")
-                if balance is not None:
+                if balance is not None and balance > 0:
                     self.capital = balance
                     logger.info(f"✅ Coinbase connected - Live balance: ${balance:,.2f}")
+                else:
+                    # USD balance not available via accounts API (likely in cash/payment method)
+                    # Use INITIAL_CAPITAL as the working capital for position sizing
+                    logger.warning(f"⚠️ USD account balance not found via API")
+                    logger.warning(f"⚠️ Using INITIAL_CAPITAL=${INITIAL_CAPITAL:,.2f} for position sizing")
+                    logger.warning(f"⚠️ Actual orders will use your available Coinbase cash balance")
+                    self.capital = INITIAL_CAPITAL
             except Exception as e:
                 logger.error(f"Failed to initialize Coinbase client: {e}")
                 self.coinbase = None
@@ -274,6 +315,18 @@ class DumpTradingBot:
         logger.info(f"Volume Surge Required: {VOLUME_SURGE_THRESHOLD}x average")
         logger.info(f"Default Buy Fee: {self.buy_fee_rate*100:.2f}%")
         logger.info(f"Default Sell Fee: {self.sell_fee_rate*100:.2f}%")
+        logger.info(f"Limit Orders: {'ENABLED' if USE_LIMIT_ORDERS else 'DISABLED (market orders)'}")
+        logger.info(f"Ladder Buys: {'ENABLED' if USE_LADDER_BUYS else 'DISABLED'}")
+        if USE_LADDER_BUYS:
+            logger.info(f"  Levels: {' → '.join([f'{p}%' for p in LADDER_BUY_LEVELS])}")
+            logger.info(f"  Timeout: {LADDER_BUY_TIMEOUT_SECONDS}s per level, {LADDER_BUY_FINAL_TIMEOUT_MINUTES} min final")
+        elif USE_LIMIT_ORDERS:
+            logger.info(f"  Buy Extra: {DUMP_LIMIT_BUY_EXTRA}% lower than alert")
+            logger.info(f"  Order Timeout: {LIMIT_ORDER_TIMEOUT_MINUTES} min")
+        logger.info(f"Ladder Sells: {'ENABLED' if USE_LADDER_SELLS else 'DISABLED'}")
+        if USE_LADDER_SELLS:
+            logger.info(f"  Start: +{LADDER_START_PERCENT}%, Step: -{LADDER_STEP_PERCENT}%, Min: +{LADDER_MIN_PERCENT}%")
+            logger.info(f"  Timeout: {LADDER_TIMEOUT_MINUTES} min per level")
         logger.info(f"TA-Lib Available: {TALIB_AVAILABLE}")
         logger.info(f"Telegram Alerts: {'ENABLED' if TELEGRAM_WEBHOOK_URL else 'DISABLED'}")
         logger.info("=" * 60)
@@ -507,19 +560,42 @@ class DumpTradingBot:
         logger.info(f"🚀 EXECUTING BUY ORDER...")
 
         # Execute actual Coinbase trade if live trading enabled
+        buy_order_id = None
+        limit_buy_price = None
+
         if self.coinbase:
-            buy_result = self.coinbase.market_buy(symbol, spend_amount)
+            if USE_LIMIT_ORDERS and USE_LADDER_BUYS:
+                # Start ladder buy at first level (most aggressive - furthest below alert)
+                ladder_pct = LADDER_BUY_LEVELS[0]
+                limit_buy_price = entry_price * (1 + ladder_pct / 100)
+                logger.info(f"📋 Starting LADDER BUY at ${limit_buy_price:.6f} ({ladder_pct}% from alert)")
+                logger.info(f"   Ladder: {' → '.join([f'{p}%' for p in LADDER_BUY_LEVELS])}")
+                buy_result = self.coinbase.limit_buy(symbol, spend_amount, limit_buy_price)
+            elif USE_LIMIT_ORDERS:
+                # Legacy: simple limit buy
+                limit_buy_price = entry_price * (1 - DUMP_LIMIT_BUY_EXTRA / 100)
+                logger.info(f"📋 Placing LIMIT BUY at ${limit_buy_price:.6f} ({DUMP_LIMIT_BUY_EXTRA}% lower than alert)")
+                buy_result = self.coinbase.limit_buy(symbol, spend_amount, limit_buy_price)
+            else:
+                logger.info(f"📋 Placing MARKET BUY")
+                buy_result = self.coinbase.market_buy(symbol, spend_amount)
+
             if not buy_result.get('success'):
                 error_msg = f"❌ Buy order failed: {buy_result.get('error')}"
                 logger.error(error_msg)
                 self.send_telegram_alert(error_msg, "error")
                 logger.info("=" * 80)
                 return
-            logger.info(f"✅ Live trade executed: Order ID {buy_result.get('order_id')}")
+
+            buy_order_id = buy_result.get('order_id')
+            logger.info(f"✅ Live order placed: Order ID {buy_order_id}")
 
         # Initial peak and trailing
         peak_price = entry_price
         trailing_exit_price = max(break_even_price, peak_price * (1 - TRAILING_THRESHOLD / 100))
+
+        # Determine position status
+        position_status = "pending_buy" if (USE_LIMIT_ORDERS and buy_order_id) else "open"
 
         # Create position
         position = DumpPosition(
@@ -538,7 +614,13 @@ class DumpTradingBot:
             trailing_exit_price=trailing_exit_price,
             dump_pct=dump_pct,
             volume_surge=volume_surge,
-            status="open"
+            status=position_status,
+            buy_order_id=buy_order_id,
+            limit_buy_price=limit_buy_price,
+            order_placed_time=datetime.now().isoformat() if buy_order_id else None,
+            alert_price=entry_price,  # Store original alert price
+            ladder_buy_level_index=0,  # Start at first ladder level
+            ladder_buy_order_time=datetime.now().isoformat() if (USE_LADDER_BUYS and buy_order_id) else None
         )
 
         self.positions[symbol] = position
@@ -571,6 +653,14 @@ class DumpTradingBot:
             return
 
         position = self.positions[symbol]
+
+        # Skip analysis for pending buy orders (not filled yet)
+        if position.status == "pending_buy":
+            return
+
+        # Skip analysis for pending sell orders (already exiting)
+        if position.status == "pending_sell":
+            return
 
         # Update price history for indicators
         position.update_price_history(current_price)
@@ -678,14 +768,53 @@ class DumpTradingBot:
 
         # Execute actual Coinbase sell if live trading enabled
         if self.coinbase:
-            sell_result = self.coinbase.market_sell(symbol, position.quantity)
-            if not sell_result.get('success'):
-                error_msg = f"❌ Sell order failed for {symbol}: {sell_result.get('error')}"
-                logger.error(error_msg)
-                self.send_telegram_alert(error_msg, "error")
-                # Don't return - still close the position in our tracking
+            # Use market sell for stop loss (need immediate exit)
+            # Use limit sell for profit targets (lower fees)
+            use_market_sell = "stop loss" in reason.lower() or "max hold" in reason.lower()
+
+            if USE_LIMIT_ORDERS and not use_market_sell:
+                # Place limit sell at current exit price
+                logger.info(f"📋 Placing LIMIT SELL at ${exit_price:.6f}")
+                sell_result = self.coinbase.limit_sell(symbol, position.quantity, exit_price)
+
+                if not sell_result.get('success'):
+                    error_msg = f"❌ Limit sell order failed for {symbol}: {sell_result.get('error')}"
+                    logger.error(error_msg)
+                    self.send_telegram_alert(error_msg, "error")
+                    # CRITICAL: Return early - do NOT close position tracking if sell failed
+                    logger.warning(f"⚠️ Position {symbol} will remain open until sell succeeds")
+                    return
+
+                # Update position to pending_sell
+                position.sell_order_id = sell_result.get('order_id')
+                position.limit_sell_price = exit_price
+                position.status = "pending_sell"
+                logger.info(f"✅ Limit sell order placed: {position.sell_order_id}")
+
+                # Send alert
+                limit_sell_alert = f"📋 LIMIT SELL PLACED\n\n" \
+                                 f"Symbol: {symbol}\n" \
+                                 f"Limit Price: ${exit_price:.6f}\n" \
+                                 f"Quantity: {position.quantity:.6f}\n" \
+                                 f"Reason: {reason}\n" \
+                                 f"Order ID: {position.sell_order_id}"
+                self.send_telegram_alert(limit_sell_alert, "info")
+                return  # Don't close position yet - wait for fill
+
             else:
-                logger.info(f"✅ Live sell executed: Order ID {sell_result.get('order_id')}")
+                # Use market sell for immediate exit
+                logger.info(f"📋 Placing MARKET SELL (reason: {reason})")
+                sell_result = self.coinbase.market_sell(symbol, position.quantity)
+
+                if not sell_result.get('success'):
+                    error_msg = f"❌ Sell order failed for {symbol}: {sell_result.get('error')}"
+                    logger.error(error_msg)
+                    self.send_telegram_alert(error_msg, "error")
+                    # CRITICAL: Return early - do NOT close position tracking if sell failed
+                    logger.warning(f"⚠️ Position {symbol} will remain open until sell succeeds")
+                    return
+                else:
+                    logger.info(f"✅ Live sell executed: Order ID {sell_result.get('order_id')}")
 
         pnl_data = position.calculate_pnl(exit_price)
 
@@ -823,6 +952,319 @@ class DumpTradingBot:
 
         # Remove position
         del self.positions[symbol]
+
+    def check_pending_buy_orders(self):
+        """Check status of pending buy orders and handle timeouts/fills"""
+        for symbol, position in list(self.positions.items()):
+            if position.status != "pending_buy" or not position.buy_order_id:
+                continue
+
+            try:
+                # Check order status
+                order_status = self.coinbase.get_order_status(position.buy_order_id)
+
+                if not order_status.get('success'):
+                    logger.warning(f"⚠️ Failed to check order status for {symbol}: {order_status.get('error')}")
+                    continue
+
+                status = order_status.get('status', 'UNKNOWN')
+                logger.debug(f"📋 {symbol} limit buy order status: {status}")
+
+                # Order filled - update position to open and place limit sell immediately
+                if status == 'FILLED':
+                    logger.info(f"✅ {symbol} limit buy FILLED at ${position.limit_buy_price:.6f}")
+
+                    # Update entry_price to actual fill price
+                    position.entry_price = position.limit_buy_price
+
+                    # Recalculate all exit prices based on actual fill
+                    position.break_even_price = position.entry_price
+                    position.min_profit_price = position.entry_price * (1 + MIN_PROFIT_TARGET / 100)
+                    position.target_profit_price = position.entry_price * (1 + TARGET_PROFIT / 100)
+                    position.stop_loss_price = position.entry_price * (1 - MAX_LOSS_PERCENT / 100)
+                    position.peak_price = position.entry_price
+                    position.trailing_exit_price = max(position.break_even_price, position.peak_price * (1 - TRAILING_THRESHOLD / 100))
+
+                    position.status = "open"
+
+                    # Send Telegram alert
+                    fill_alert = f"✅ LIMIT BUY FILLED\n\n" \
+                                f"Symbol: {symbol}\n" \
+                                f"Price: ${position.limit_buy_price:.6f}\n" \
+                                f"Quantity: {position.quantity:.6f}\n" \
+                                f"Order ID: {position.buy_order_id}"
+                    self.send_telegram_alert(fill_alert, "success")
+
+                    # IMMEDIATELY place limit sell
+                    if USE_LIMIT_ORDERS and self.coinbase:
+                        # Use ladder strategy if enabled, otherwise simple limit sell
+                        if USE_LADDER_SELLS:
+                            # Start ladder at highest profit level (from actual fill price)
+                            sell_price = position.entry_price * (1 + LADDER_START_PERCENT / 100)
+                            position.ladder_current_percent = LADDER_START_PERCENT
+                            logger.info(f"📋 Starting LADDER SELL at ${sell_price:.6f} (+{LADDER_START_PERCENT}%)")
+                        else:
+                            # Simple limit sell at minimum profit target
+                            sell_price = position.entry_price * (1 + MIN_PROFIT_TARGET / 100)
+                            logger.info(f"📋 Placing LIMIT SELL immediately at ${sell_price:.6f} (+{MIN_PROFIT_TARGET}%)")
+
+                        sell_result = self.coinbase.limit_sell(symbol, position.quantity, sell_price)
+
+                        if sell_result.get('success'):
+                            position.sell_order_id = sell_result.get('order_id')
+                            position.limit_sell_price = sell_price
+                            position.status = "pending_sell"
+                            position.ladder_order_time = datetime.now().isoformat()
+                            logger.info(f"✅ Limit sell placed: {position.sell_order_id}")
+
+                            # Update alert
+                            strategy_label = "LADDER" if USE_LADDER_SELLS else "LIMIT"
+                            profit_pct = position.ladder_current_percent if USE_LADDER_SELLS else MIN_PROFIT_TARGET
+                            sell_alert = f"📋 {strategy_label} SELL PLACED\n\n" \
+                                       f"Symbol: {symbol}\n" \
+                                       f"Sell Price: ${sell_price:.6f} (+{profit_pct}%)\n" \
+                                       f"Order ID: {position.sell_order_id}"
+                            if USE_LADDER_SELLS:
+                                sell_alert += f"\n\nLadder: {LADDER_START_PERCENT}% → {LADDER_MIN_PERCENT}% (step {LADDER_STEP_PERCENT}%)"
+                            self.send_telegram_alert(sell_alert, "info")
+                        else:
+                            logger.error(f"❌ Failed to place limit sell: {sell_result.get('error')}")
+
+                # Order still open - check for ladder timeout
+                elif status == 'OPEN':
+                    if USE_LADDER_BUYS and position.ladder_buy_order_time:
+                        order_placed = datetime.fromisoformat(position.ladder_buy_order_time)
+                        seconds_elapsed = (datetime.now() - order_placed).total_seconds()
+
+                        # Determine timeout based on ladder level
+                        current_level = position.ladder_buy_level_index
+                        is_final_level = (current_level == len(LADDER_BUY_LEVELS) - 1)
+
+                        if is_final_level:
+                            timeout_seconds = LADDER_BUY_FINAL_TIMEOUT_MINUTES * 60
+                        else:
+                            timeout_seconds = LADDER_BUY_TIMEOUT_SECONDS
+
+                        # Check if timeout reached
+                        if seconds_elapsed >= timeout_seconds:
+                            # If at final level, give up
+                            if is_final_level:
+                                logger.warning(f"⏰ {symbol} ladder buy final timeout - giving up")
+
+                                # Cancel the limit order
+                                cancel_result = self.coinbase.cancel_order(position.buy_order_id)
+
+                                if cancel_result.get('success'):
+                                    logger.info(f"🚫 {symbol} ladder buy cancelled - removing position")
+
+                                    # Return capital
+                                    self.capital += position.cost_basis
+
+                                    # Remove position
+                                    del self.positions[symbol]
+
+                                    # Send alert
+                                    timeout_alert = f"⏰ LADDER BUY TIMEOUT\n\n" \
+                                                  f"Symbol: {symbol}\n" \
+                                                  f"Final Price: ${position.limit_buy_price:.6f}\n" \
+                                                  f"Reason: No fill after full ladder cycle\n" \
+                                                  f"Capital returned: ${position.cost_basis:.2f}"
+                                    self.send_telegram_alert(timeout_alert, "warning")
+                                else:
+                                    logger.error(f"❌ Failed to cancel order {position.buy_order_id}: {cancel_result.get('error')}")
+                            else:
+                                # Step up to next level (less aggressive, closer to alert price)
+                                next_level_index = current_level + 1
+                                next_ladder_pct = LADDER_BUY_LEVELS[next_level_index]
+                                new_buy_price = position.alert_price * (1 + next_ladder_pct / 100)
+
+                                logger.info(f"⏰ {symbol} ladder buy timeout - stepping up from {LADDER_BUY_LEVELS[current_level]}% to {next_ladder_pct}%")
+
+                                # Cancel current order
+                                cancel_result = self.coinbase.cancel_order(position.buy_order_id)
+
+                                if cancel_result.get('success'):
+                                    # Place new order at higher price
+                                    logger.info(f"📋 Placing new LADDER BUY at ${new_buy_price:.6f} ({next_ladder_pct}% from alert)")
+
+                                    buy_result = self.coinbase.limit_buy(symbol, position.cost_basis, new_buy_price)
+
+                                    if buy_result.get('success'):
+                                        position.buy_order_id = buy_result.get('order_id')
+                                        position.limit_buy_price = new_buy_price
+                                        position.ladder_buy_level_index = next_level_index
+                                        position.ladder_buy_order_time = datetime.now().isoformat()
+                                        logger.info(f"✅ New ladder buy order placed: {position.buy_order_id}")
+
+                                        # Send alert
+                                        ladder_alert = f"📈 LADDER BUY STEP UP\n\n" \
+                                                      f"Symbol: {symbol}\n" \
+                                                      f"New Price: ${new_buy_price:.6f} ({next_ladder_pct}%)\n" \
+                                                      f"Previous: {LADDER_BUY_LEVELS[current_level]}%\n" \
+                                                      f"Order ID: {position.buy_order_id}"
+                                        self.send_telegram_alert(ladder_alert, "info")
+                                    else:
+                                        logger.error(f"❌ Failed to place new ladder buy order: {buy_result.get('error')}")
+                                        # Give up - return capital and remove position
+                                        self.capital += position.cost_basis
+                                        del self.positions[symbol]
+                                else:
+                                    logger.error(f"❌ Failed to cancel ladder order: {cancel_result.get('error')}")
+                    else:
+                        # Legacy timeout handling (non-ladder)
+                        order_placed = datetime.fromisoformat(position.order_placed_time)
+                        minutes_elapsed = (datetime.now() - order_placed).total_seconds() / 60
+
+                        if minutes_elapsed >= LIMIT_ORDER_TIMEOUT_MINUTES:
+                            logger.warning(f"⏰ {symbol} limit buy timeout ({minutes_elapsed:.1f} min) - cancelling")
+
+                            # Cancel the limit order
+                            cancel_result = self.coinbase.cancel_order(position.buy_order_id)
+
+                            if cancel_result.get('success'):
+                                logger.info(f"🚫 {symbol} limit buy cancelled - removing position")
+
+                                # Return capital
+                                self.capital += position.cost_basis
+
+                                # Remove position
+                                del self.positions[symbol]
+
+                                # Send alert
+                                timeout_alert = f"⏰ LIMIT BUY TIMEOUT\n\n" \
+                                              f"Symbol: {symbol}\n" \
+                                              f"Limit Price: ${position.limit_buy_price:.6f}\n" \
+                                              f"Reason: Order not filled after {LIMIT_ORDER_TIMEOUT_MINUTES} min\n" \
+                                              f"Capital returned: ${position.cost_basis:.2f}"
+                                self.send_telegram_alert(timeout_alert, "warning")
+                            else:
+                                logger.error(f"❌ Failed to cancel order {position.buy_order_id}: {cancel_result.get('error')}")
+
+                # Order cancelled externally
+                elif status == 'CANCELLED':
+                    logger.warning(f"🚫 {symbol} limit buy was cancelled externally")
+                    self.capital += position.cost_basis
+                    del self.positions[symbol]
+
+            except Exception as e:
+                logger.error(f"Error checking pending buy order for {symbol}: {e}")
+
+    def check_pending_sell_orders(self):
+        """Check status of pending sell orders and handle ladder timeouts"""
+        for symbol, position in list(self.positions.items()):
+            if position.status != "pending_sell" or not position.sell_order_id:
+                continue
+
+            try:
+                # Check order status
+                order_status = self.coinbase.get_order_status(position.sell_order_id)
+
+                if not order_status.get('success'):
+                    logger.warning(f"⚠️ Failed to check sell order status for {symbol}: {order_status.get('error')}")
+                    continue
+
+                status = order_status.get('status', 'UNKNOWN')
+                logger.debug(f"📋 {symbol} limit sell order status: {status}")
+
+                # Order filled - close position
+                if status == 'FILLED':
+                    strategy_label = "LADDER" if USE_LADDER_SELLS else "LIMIT"
+                    logger.info(f"✅ {symbol} {strategy_label} sell FILLED at ${position.limit_sell_price:.6f}")
+
+                    # Calculate P&L
+                    pnl_data = position.calculate_pnl(position.limit_sell_price)
+
+                    # Update capital
+                    self.capital += pnl_data['proceeds']
+
+                    # Send alert
+                    fill_alert = f"✅ {strategy_label} SELL FILLED\n\n" \
+                                f"Symbol: {symbol}\n" \
+                                f"Entry: ${position.entry_price:.6f}\n" \
+                                f"Exit: ${position.limit_sell_price:.6f}\n" \
+                                f"P&L: ${pnl_data['pnl']:+.2f} ({pnl_data['pnl_percent']:+.2f}%)\n" \
+                                f"Order ID: {position.sell_order_id}"
+                    if USE_LADDER_SELLS and position.ladder_current_percent:
+                        fill_alert += f"\n\nLadder Level: +{position.ladder_current_percent}%"
+                    alert_type = "success" if pnl_data['pnl_percent'] > 0 else "warning"
+                    self.send_telegram_alert(fill_alert, alert_type)
+
+                    # Record trade exit
+                    reason = f"Ladder sell filled at +{position.ladder_current_percent}%" if USE_LADDER_SELLS else "Limit sell filled"
+                    self._record_trade_exit(position, position.limit_sell_price, pnl_data, reason)
+
+                    # Remove position
+                    del self.positions[symbol]
+
+                # Order still open - check for ladder timeout
+                elif status == 'OPEN':
+                    if USE_LADDER_SELLS and position.ladder_order_time and position.ladder_current_percent:
+                        order_placed = datetime.fromisoformat(position.ladder_order_time)
+                        minutes_elapsed = (datetime.now() - order_placed).total_seconds() / 60
+
+                        # Dynamic timeout based on profit level
+                        # Above +2%: 1 minute per level
+                        # At +2%: 2 minutes
+                        # Below +2%: 3 minutes per level
+                        if position.ladder_current_percent > 2.0:
+                            timeout_minutes = 1.0
+                        elif position.ladder_current_percent == 2.0:
+                            timeout_minutes = 2.0
+                        else:
+                            timeout_minutes = 3.0
+
+                        # Check if ladder timeout reached
+                        if minutes_elapsed >= timeout_minutes:
+                            # Calculate next ladder level
+                            next_percent = position.ladder_current_percent - LADDER_STEP_PERCENT
+
+                            # Keep stepping down until it sells (no minimum limit)
+                            logger.info(f"⏰ {symbol} ladder timeout ({timeout_minutes} min) - stepping down from +{position.ladder_current_percent}% to +{next_percent}%")
+
+                            # Cancel current order
+                            cancel_result = self.coinbase.cancel_order(position.sell_order_id)
+
+                            if cancel_result.get('success'):
+                                # Place new order at lower price
+                                new_sell_price = position.entry_price * (1 + next_percent / 100)
+                                logger.info(f"📋 Placing new LADDER SELL at ${new_sell_price:.6f} (+{next_percent}%)")
+
+                                sell_result = self.coinbase.limit_sell(symbol, position.quantity, new_sell_price)
+
+                                if sell_result.get('success'):
+                                    position.sell_order_id = sell_result.get('order_id')
+                                    position.limit_sell_price = new_sell_price
+                                    position.ladder_current_percent = next_percent
+                                    position.ladder_order_time = datetime.now().isoformat()
+                                    logger.info(f"✅ New ladder order placed: {position.sell_order_id}")
+
+                                    # Send alert
+                                    ladder_alert = f"📉 LADDER STEP DOWN\n\n" \
+                                                  f"Symbol: {symbol}\n" \
+                                                  f"New Price: ${new_sell_price:.6f} (+{next_percent}%)\n" \
+                                                  f"Previous: +{position.ladder_current_percent + LADDER_STEP_PERCENT}%\n" \
+                                                  f"Next Step: +{next_percent - LADDER_STEP_PERCENT}%\n" \
+                                                  f"Order ID: {position.sell_order_id}"
+                                    self.send_telegram_alert(ladder_alert, "info")
+                                else:
+                                    logger.error(f"❌ Failed to place new ladder order: {sell_result.get('error')}")
+                                    # Revert to open status
+                                    position.status = "open"
+                                    position.sell_order_id = None
+                                    position.limit_sell_price = None
+                            else:
+                                logger.error(f"❌ Failed to cancel ladder order: {cancel_result.get('error')}")
+
+                # Order cancelled - revert to open position (unless we're laddering)
+                elif status == 'CANCELLED':
+                    if not USE_LADDER_SELLS:
+                        logger.warning(f"🚫 {symbol} limit sell was cancelled - reverting to open")
+                        position.status = "open"
+                        position.sell_order_id = None
+                        position.limit_sell_price = None
+
+            except Exception as e:
+                logger.error(f"Error checking pending sell order for {symbol}: {e}")
 
     def _record_trade_entry(self, position: DumpPosition):
         """Record trade entry in database"""
@@ -1061,11 +1503,38 @@ class DumpTradingBot:
         thread.start()
         logger.info(f"📅 Daily summary scheduler started (sends at {DAILY_SUMMARY_TIME})")
 
+    def monitor_pending_orders(self):
+        """Background thread to monitor pending buy/sell orders"""
+        def monitor():
+            while self.running:
+                try:
+                    if self.coinbase and USE_LIMIT_ORDERS:
+                        # Check pending buy orders
+                        self.check_pending_buy_orders()
+
+                        # Check pending sell orders
+                        self.check_pending_sell_orders()
+
+                    # Check every 10 seconds
+                    time.sleep(10)
+
+                except Exception as e:
+                    logger.error(f"Error in pending orders monitor: {e}")
+                    time.sleep(10)
+
+        thread = threading.Thread(target=monitor, daemon=True)
+        thread.start()
+        logger.info(f"📋 Pending orders monitor started (checks every 10s)")
+
     def run(self):
         """Main bot loop"""
         try:
             # Start daily summary scheduler
             self.schedule_daily_summary()
+
+            # Start pending orders monitor
+            if USE_LIMIT_ORDERS:
+                self.monitor_pending_orders()
 
             # Connect to WebSocket and start trading
             self.connect_websocket()

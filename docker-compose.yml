@@ -5,7 +5,7 @@ services:
       target: production
     container_name: bot-frontend
     ports:
-      - "80:80"
+      - "3005:80"
     depends_on:
       - backend
     networks:
@@ -151,6 +151,9 @@ services:
       - SMA_PERIOD=${SMA_PERIOD:-5}
       - DEFAULT_BUY_FEE_PERCENT=${DEFAULT_BUY_FEE_PERCENT:-0.6}
       - DEFAULT_SELL_FEE_PERCENT=${DEFAULT_SELL_FEE_PERCENT:-0.4}
+      - USE_LIMIT_ORDERS=${USE_LIMIT_ORDERS:-yes}  # Use limit orders for lower fees
+      - LIMIT_BUY_EXTRA_PCT=${LIMIT_BUY_EXTRA_PCT:-1.0}  # Buy 1% lower than alert
+      - LIMIT_ORDER_TIMEOUT_MINUTES=${LIMIT_ORDER_TIMEOUT_MINUTES:-2.0}  # Cancel timeout
       - DUMP_DB_PATH=/app/data/dump_trading.db
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     networks:

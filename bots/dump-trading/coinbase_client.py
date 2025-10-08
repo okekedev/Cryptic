@@ -106,12 +106,27 @@ class CoinbaseClient:
                 return None
 
             accounts = response.get('accounts', [])
-            for account in accounts:
-                if account.get('currency') == currency:
-                    available_balance = account.get('available_balance', {})
-                    return float(available_balance.get('value', 0))
+            logger.info(f"Found {len(accounts)} account(s) from Coinbase")
 
-            logger.warning(f"No {currency} account found")
+            # Log all accounts with balances > 0
+            accounts_with_balance = []
+            for account in accounts:
+                currency_code = account.get('currency')
+                available_balance = account.get('available_balance', {})
+                balance_value = float(available_balance.get('value', 0))
+
+                if balance_value > 0:
+                    accounts_with_balance.append(f"{currency_code}: ${balance_value:,.2f}")
+                    logger.info(f"  💰 {currency_code}: ${balance_value:,.2f}")
+
+                if currency_code == currency:
+                    logger.info(f"✅ Found {currency} account with balance: ${balance_value:,.2f}")
+                    return balance_value
+
+            if accounts_with_balance:
+                logger.info(f"Accounts with balance: {', '.join(accounts_with_balance)}")
+
+            logger.warning(f"No {currency} account found. Available currencies: {[a.get('currency') for a in accounts]}")
             return None
 
         except Exception as e:
@@ -198,6 +213,10 @@ class CoinbaseClient:
             Dict with success status and order details
         """
         try:
+            # Round base_amount to 8 decimal places to avoid INVALID_SIZE_PRECISION error
+            # Coinbase requires specific decimal precision per product
+            base_amount_rounded = round(base_amount, 8)
+
             client_order_id = f"dump_sell_{product_id}_{int(datetime.now().timestamp())}"
 
             order_data = {
@@ -206,12 +225,12 @@ class CoinbaseClient:
                 "side": "SELL",
                 "order_configuration": {
                     "market_market_ioc": {
-                        "base_size": str(base_amount)
+                        "base_size": str(base_amount_rounded)
                     }
                 }
             }
 
-            logger.info(f"Placing market SELL: {base_amount:.6f} of {product_id}")
+            logger.info(f"Placing market SELL: {base_amount_rounded:.8f} of {product_id}")
             response = self._make_request('POST', '/api/v3/brokerage/orders', json_data=order_data)
 
             if 'error' in response:
@@ -251,6 +270,222 @@ class CoinbaseClient:
             logger.error(f"Exception placing sell order: {e}")
             return {'success': False, 'error': str(e)}
 
+    def limit_buy(self, product_id: str, quote_amount: float, limit_price: float) -> Dict:
+        """
+        Place a limit buy order (lower fees - maker order)
+
+        Args:
+            product_id: Trading pair (e.g., "BTC-USD")
+            quote_amount: Amount in quote currency (USD) to spend
+            limit_price: Limit price to buy at
+
+        Returns:
+            Dict with success status and order details
+        """
+        try:
+            # Get product specifications for proper rounding
+            product_details = self.get_product_details(product_id)
+            if not product_details:
+                logger.error(f"Could not fetch product details for {product_id}")
+                return {'success': False, 'error': 'Could not fetch product details'}
+
+            # Calculate base size from quote amount and limit price
+            base_size = quote_amount / limit_price
+
+            # Round to product-specific increments
+            base_increment = product_details['base_increment']
+            quote_increment = product_details['quote_increment']
+
+            base_size_str = self._round_to_increment(base_size, base_increment)
+            limit_price_str = self._round_to_increment(limit_price, quote_increment)
+
+            client_order_id = f"dump_limit_buy_{product_id}_{int(datetime.now().timestamp())}"
+
+            order_data = {
+                "client_order_id": client_order_id,
+                "product_id": product_id,
+                "side": "BUY",
+                "order_configuration": {
+                    "limit_limit_gtc": {
+                        "base_size": base_size_str,
+                        "limit_price": limit_price_str,
+                        "post_only": False  # Allow taker if needed
+                    }
+                }
+            }
+
+            logger.info(f"Placing LIMIT BUY: {base_size_str} {product_id} @ ${limit_price_str} (increment: {base_increment})")
+            response = self._make_request('POST', '/api/v3/brokerage/orders', json_data=order_data)
+
+            if 'error' in response:
+                logger.error(f"Limit buy order failed: {response['error']}")
+                return {'success': False, 'error': response['error']}
+
+            logger.info(f"Coinbase API response: {response}")
+
+            # Extract order_id
+            order_id = None
+            if response.get('success') and 'success_response' in response:
+                order_id = response['success_response'].get('order_id')
+                logger.info(f"Extracted order_id from success_response: {order_id}")
+
+            if not order_id:
+                order_id = response.get('order_id', 'unknown')
+                logger.info(f"Fallback order_id from root: {order_id}")
+
+            if order_id == 'unknown' or not order_id:
+                logger.error(f"Could not extract order_id. Response keys: {list(response.keys())}")
+                return {'success': False, 'error': 'Could not extract order_id', 'raw_response': response}
+
+            logger.info(f"✅ Limit buy order placed: {order_id}")
+            return {
+                'success': True,
+                'order_id': order_id,
+                'product_id': product_id,
+                'base_size': base_size_str,
+                'limit_price': limit_price_str
+            }
+
+        except Exception as e:
+            logger.error(f"Exception placing limit buy order: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def limit_sell(self, product_id: str, base_amount: float, limit_price: float) -> Dict:
+        """
+        Place a limit sell order (lower fees - maker order)
+
+        Args:
+            product_id: Trading pair (e.g., "BTC-USD")
+            base_amount: Amount of base currency to sell
+            limit_price: Limit price to sell at
+
+        Returns:
+            Dict with success status and order details
+        """
+        try:
+            # Get product specifications for proper rounding
+            product_details = self.get_product_details(product_id)
+            if not product_details:
+                logger.error(f"Could not fetch product details for {product_id}")
+                return {'success': False, 'error': 'Could not fetch product details'}
+
+            # Round to product-specific increments
+            base_increment = product_details['base_increment']
+            quote_increment = product_details['quote_increment']
+
+            base_amount_str = self._round_to_increment(base_amount, base_increment)
+            limit_price_str = self._round_to_increment(limit_price, quote_increment)
+
+            client_order_id = f"dump_limit_sell_{product_id}_{int(datetime.now().timestamp())}"
+
+            order_data = {
+                "client_order_id": client_order_id,
+                "product_id": product_id,
+                "side": "SELL",
+                "order_configuration": {
+                    "limit_limit_gtc": {
+                        "base_size": base_amount_str,
+                        "limit_price": limit_price_str,
+                        "post_only": False  # Allow taker if needed
+                    }
+                }
+            }
+
+            logger.info(f"Placing LIMIT SELL: {base_amount_str} {product_id} @ ${limit_price_str} (increment: {base_increment})")
+            response = self._make_request('POST', '/api/v3/brokerage/orders', json_data=order_data)
+
+            if 'error' in response:
+                logger.error(f"Limit sell order failed: {response['error']}")
+                return {'success': False, 'error': response['error']}
+
+            logger.info(f"Coinbase API response: {response}")
+
+            # Extract order_id
+            order_id = None
+            if response.get('success') and 'success_response' in response:
+                order_id = response['success_response'].get('order_id')
+                logger.info(f"Extracted order_id from success_response: {order_id}")
+
+            if not order_id:
+                order_id = response.get('order_id', 'unknown')
+                logger.info(f"Fallback order_id from root: {order_id}")
+
+            if order_id == 'unknown' or not order_id:
+                logger.error(f"Could not extract order_id. Response keys: {list(response.keys())}")
+                return {'success': False, 'error': 'Could not extract order_id', 'raw_response': response}
+
+            logger.info(f"✅ Limit sell order placed: {order_id}")
+            return {
+                'success': True,
+                'order_id': order_id,
+                'product_id': product_id,
+                'base_amount': base_amount_str,
+                'limit_price': limit_price_str
+            }
+
+        except Exception as e:
+            logger.error(f"Exception placing limit sell order: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def get_order_status(self, order_id: str) -> Dict:
+        """
+        Get status of an order
+
+        Args:
+            order_id: The order ID to check
+
+        Returns:
+            Dict with order status details
+        """
+        try:
+            path = f"/api/v3/brokerage/orders/historical/{order_id}"
+            response = self._make_request('GET', path)
+
+            if 'error' in response:
+                return {'success': False, 'error': response['error']}
+
+            order = response.get('order', {})
+            status = order.get('status', 'UNKNOWN')
+            filled_size = float(order.get('filled_size', 0))
+
+            return {
+                'success': True,
+                'order_id': order_id,
+                'status': status,  # OPEN, FILLED, CANCELLED, etc.
+                'filled_size': filled_size,
+                'order': order
+            }
+
+        except Exception as e:
+            logger.error(f"Exception checking order status: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def cancel_order(self, order_id: str) -> Dict:
+        """
+        Cancel an open order
+
+        Args:
+            order_id: The order ID to cancel
+
+        Returns:
+            Dict with cancellation result
+        """
+        try:
+            path = f"/api/v3/brokerage/orders/batch_cancel"
+            cancel_data = {"order_ids": [order_id]}
+
+            response = self._make_request('POST', path, json_data=cancel_data)
+
+            if 'error' in response:
+                return {'success': False, 'error': response['error']}
+
+            logger.info(f"✅ Order {order_id} cancelled")
+            return {'success': True, 'order_id': order_id}
+
+        except Exception as e:
+            logger.error(f"Exception cancelling order: {e}")
+            return {'success': False, 'error': str(e)}
+
     def get_current_price(self, product_id: str) -> Optional[float]:
         """Get current market price for a product"""
         try:
@@ -269,3 +504,51 @@ class CoinbaseClient:
         except Exception as e:
             logger.error(f"Exception fetching price: {e}")
             return None
+
+    def get_product_details(self, product_id: str) -> Optional[Dict]:
+        """Get product specifications including increment and size limits"""
+        try:
+            path = f"/api/v3/brokerage/products/{product_id}"
+            response = self._make_request('GET', path)
+
+            if 'error' in response:
+                logger.error(f"Error fetching product details: {response['error']}")
+                return None
+
+            # Log full response for debugging
+            logger.info(f"Product details for {product_id}: base_increment={response.get('base_increment')}, quote_increment={response.get('quote_increment')}")
+
+            return {
+                'base_increment': response.get('base_increment', '0.01'),
+                'quote_increment': response.get('quote_increment', '0.01'),
+                'base_min_size': response.get('base_min_size', '0'),
+                'base_max_size': response.get('base_max_size', '999999999'),
+                'quote_min_size': response.get('quote_min_size', '0'),
+                'quote_max_size': response.get('quote_max_size', '999999999')
+            }
+
+        except Exception as e:
+            logger.error(f"Exception fetching product details: {e}")
+            return None
+
+    def _round_to_increment(self, value: float, increment: str) -> str:
+        """Round a value to the nearest increment"""
+        try:
+            from decimal import Decimal, ROUND_DOWN
+
+            # Convert to Decimal for precise arithmetic
+            inc_decimal = Decimal(str(increment))
+            value_decimal = Decimal(str(value))
+
+            # Round DOWN to nearest increment (floor)
+            rounded = (value_decimal / inc_decimal).quantize(Decimal('1'), rounding=ROUND_DOWN) * inc_decimal
+
+            # Normalize to remove trailing zeros, then convert to string
+            result = str(rounded.normalize())
+
+            logger.info(f"Rounding {value} to increment {increment}: {result}")
+
+            return result
+        except Exception as e:
+            logger.error(f"Error rounding to increment: {e}")
+            return str(round(value, 2))

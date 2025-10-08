@@ -277,7 +277,9 @@ db_conn = None
 
 def format_price_alert(data):
     """Format price alert with trading buttons"""
-    emoji = "🚀" if data['spike_type'] == 'pump' else "📉"
+    # Handle both spike_type (old format) and event_type (new format)
+    spike_type = data.get('spike_type') or data.get('event_type', 'unknown')
+    emoji = "🚀" if spike_type == 'pump' else "📉"
 
     timestamp_str = ""
     if 'timestamp' in data:
@@ -302,7 +304,7 @@ def format_price_alert(data):
     else:
         # All other spike alerts (pump/dump) - no buttons
         message = (
-            f"{emoji} *PRICE {data['spike_type'].upper()} ALERT* {emoji}\n\n"
+            f"{emoji} *PRICE {spike_type.upper()} ALERT* {emoji}\n\n"
             f"*Symbol:* {data['symbol']}\n"
             f"*Change:* {data['pct_change']:.2f}%\n"
             f"*Price:* ${data['old_price']:.6f} → ${data['new_price']:.6f}\n"
@@ -2273,14 +2275,20 @@ async def send_alert(bot: Bot, alert_data: dict):
         return
 
     # Handle different data formats
-    if 'text' in alert_data and 'spike_type' not in alert_data:
+    if alert_data.get('type') == 'dump_trading_alert':
+        # It's from dump-trading bot - send as plain text
+        message = alert_data.get('message', 'Unknown dump trading alert')
+        reply_markup = None
+        parse_mode = None
+        logger.info(f"Received dump-trading alert: {alert_data.get('alert_type', 'unknown')}")
+    elif 'text' in alert_data and 'spike_type' not in alert_data:
         # It's a text-only format from webhook, send as plain text
         message = alert_data['text']
         reply_markup = None
         parse_mode = None
         logger.info("Received text-format alert")
     else:
-        # It's full data format with trading buttons
+        # It's full data format with trading buttons (spike alerts)
         message, reply_markup = format_price_alert(alert_data)
         parse_mode = 'Markdown'
         logger.info(f"Received data-format alert: {alert_data.get('symbol', 'unknown')}")
