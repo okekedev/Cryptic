@@ -68,9 +68,8 @@ LIMIT_ORDER_TIMEOUT_MINUTES = float(os.getenv("LIMIT_ORDER_TIMEOUT_MINUTES", "2.
 
 # Ladder-up buy strategy (try to get better entry price)
 USE_LADDER_BUYS = os.getenv("USE_LADDER_BUYS", "yes").lower() in ("yes", "true", "1")
-LADDER_BUY_LEVELS = [-3.0, -2.0, -1.0, -0.5, -0.25]  # % below alert price
-LADDER_BUY_TIMEOUT_SECONDS = 30.0  # 30 seconds per level for first 4
-LADDER_BUY_FINAL_TIMEOUT_MINUTES = 2.0  # 2 minutes at final -0.25% level
+LADDER_BUY_LEVELS = [-2.0, -1.0, -0.5, -0.25]  # % below alert price
+LADDER_BUY_TIMEOUTS = [30.0, 30.0, 120.0, 120.0]  # Timeout in seconds for each level
 
 # Ladder-down sell strategy
 USE_LADDER_SELLS = os.getenv("USE_LADDER_SELLS", "no").lower() in ("yes", "true", "1")
@@ -319,7 +318,7 @@ class DumpTradingBot:
         logger.info(f"Ladder Buys: {'ENABLED' if USE_LADDER_BUYS else 'DISABLED'}")
         if USE_LADDER_BUYS:
             logger.info(f"  Levels: {' → '.join([f'{p}%' for p in LADDER_BUY_LEVELS])}")
-            logger.info(f"  Timeout: {LADDER_BUY_TIMEOUT_SECONDS}s per level, {LADDER_BUY_FINAL_TIMEOUT_MINUTES} min final")
+            logger.info(f"  Timeouts: {' → '.join([f'{int(t)}s' for t in LADDER_BUY_TIMEOUTS])}")
         elif USE_LIMIT_ORDERS:
             logger.info(f"  Buy Extra: {DUMP_LIMIT_BUY_EXTRA}% lower than alert")
             logger.info(f"  Order Timeout: {LIMIT_ORDER_TIMEOUT_MINUTES} min")
@@ -978,7 +977,7 @@ class DumpTradingBot:
                     position.entry_price = position.limit_buy_price
 
                     # Update quantity to actual filled amount (after fees)
-                    actual_filled = status_result.get('filled_size', 0)
+                    actual_filled = order_status.get('filled_size', 0)
                     if actual_filled > 0:
                         position.quantity = actual_filled
                         logger.info(f"📊 Actual filled quantity (after fees): {actual_filled}")
@@ -1046,10 +1045,8 @@ class DumpTradingBot:
                         current_level = position.ladder_buy_level_index
                         is_final_level = (current_level == len(LADDER_BUY_LEVELS) - 1)
 
-                        if is_final_level:
-                            timeout_seconds = LADDER_BUY_FINAL_TIMEOUT_MINUTES * 60
-                        else:
-                            timeout_seconds = LADDER_BUY_TIMEOUT_SECONDS
+                        # Get timeout for current level
+                        timeout_seconds = LADDER_BUY_TIMEOUTS[current_level] if current_level < len(LADDER_BUY_TIMEOUTS) else 120.0
 
                         # Check if timeout reached
                         if seconds_elapsed >= timeout_seconds:
