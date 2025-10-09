@@ -312,7 +312,7 @@ class CoinbaseClient:
                     "limit_limit_gtc": {
                         "base_size": base_size_str,
                         "limit_price": limit_price_str,
-                        "post_only": False  # Allow taker if needed
+                        "post_only": True  # Maker-only orders for lower fees (~0.4% vs ~1.2%)
                     }
                 }
             }
@@ -389,7 +389,7 @@ class CoinbaseClient:
                     "limit_limit_gtc": {
                         "base_size": base_amount_str,
                         "limit_price": limit_price_str,
-                        "post_only": False  # Allow taker if needed
+                        "post_only": True  # Maker-only orders for lower fees (~0.4% vs ~1.2%)
                     }
                 }
             }
