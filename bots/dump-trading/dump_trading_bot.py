@@ -68,8 +68,9 @@ LIMIT_ORDER_TIMEOUT_MINUTES = float(os.getenv("LIMIT_ORDER_TIMEOUT_MINUTES", "2.
 
 # Ladder-up buy strategy (try to get better entry price)
 USE_LADDER_BUYS = os.getenv("USE_LADDER_BUYS", "yes").lower() in ("yes", "true", "1")
-LADDER_BUY_LEVELS = [-2.0, -1.0, -0.5, -0.25]  # % below alert price
-LADDER_BUY_TIMEOUTS = [30.0, 30.0, 120.0, 120.0]  # Timeout in seconds for each level
+# Start at -8%, step up by 0.5% every 30 seconds until -0.5%
+LADDER_BUY_LEVELS = [-8.0, -7.5, -7.0, -6.5, -6.0, -5.5, -5.0, -4.5, -4.0, -3.5, -3.0, -2.5, -2.0, -1.5, -1.0, -0.5]  # % below current price
+LADDER_BUY_TIMEOUTS = [30.0] * 16  # 30 seconds per level (16 levels, total 8 minutes)
 
 # Ladder-down sell strategy
 USE_LADDER_SELLS = os.getenv("USE_LADDER_SELLS", "no").lower() in ("yes", "true", "1")
@@ -189,66 +190,10 @@ class DumpPosition:
         """
         Check if position should be exited
 
-        Exit conditions:
-        1. Stop loss: -2% max loss
-        2. Target hit: +3% profit
-        3. Quick profit: 1-2% profit, then break-even if dips
-        4. Trailing stop after profit
-        5. RSI overbought (>70) after profit
-        6. Price below SMA after min hold
-        7. Max hold time reached (15 min)
+        DISABLED: All automatic exits disabled - only ladder sell strategy controls exits
+        The ladder sell will step down from +8% to any level (including negative) until it fills
         """
-        entry_time = datetime.fromisoformat(self.entry_time)
-        time_held_minutes = (datetime.now() - entry_time).total_seconds() / 60
-
-        # Calculate current P&L (simplified - no fees)
-        current_value = current_price * self.quantity
-        pnl = current_value - self.cost_basis
-        pnl_percent = (pnl / self.cost_basis) * 100
-
-        # 1. STOP LOSS: Exit immediately if -2% or worse
-        if current_price <= self.stop_loss_price:
-            return True, f"Stop loss hit ({pnl_percent:.2f}%)"
-
-        # 2. TARGET PROFIT: Exit immediately if +3% or better
-        if current_price >= self.target_profit_price:
-            return True, f"Target profit hit ({pnl_percent:.2f}%)"
-
-        # 3. BREAK-EVEN EXIT: If we hit 1-2% profit but now below entry
-        if self.peak_price >= self.min_profit_price and current_price < self.break_even_price:
-            return True, f"Break-even exit after profit peak ({pnl_percent:.2f}%)"
-
-        # 4. TRAILING STOP: After hitting min profit target
-        if current_price >= self.min_profit_price:
-            if current_price <= self.trailing_exit_price:
-                return True, f"Trailing stop hit ({pnl_percent:.2f}%)"
-
-        # Wait for minimum hold time for indicator-based exits
-        if time_held_minutes < MIN_HOLD_TIME_MINUTES:
-            return False, ""
-
-        # 5. RSI OVERBOUGHT: Exit if RSI > 70 and we have profit
-        if TALIB_AVAILABLE and pnl_percent > 0:
-            rsi = self.calculate_rsi()
-            if rsi and rsi > RSI_OVERBOUGHT:
-                return True, f"RSI overbought exit (RSI={rsi:.1f}, profit={pnl_percent:.2f}%)"
-
-        # 6. PRICE BELOW SMA: Exit if price crosses below 5-period SMA
-        if TALIB_AVAILABLE:
-            sma = self.calculate_sma(SMA_PERIOD)
-            if sma and current_price < sma:
-                return True, f"Price below {SMA_PERIOD}-SMA exit ({pnl_percent:.2f}%)"
-
-        # 7. MAX HOLD TIME: Force exit after 15 minutes
-        if time_held_minutes >= MAX_HOLD_TIME_MINUTES:
-            return True, f"Max hold time reached ({time_held_minutes:.1f} min, {pnl_percent:.2f}%)"
-
-        # 8. VOLUME DRY UP: Exit if volume drops significantly and we have profit
-        if pnl_percent > 0 and avg_volume > 0 and current_volume > 0:
-            volume_ratio = current_volume / avg_volume
-            if volume_ratio < 0.5:  # Volume dropped below 50% of average
-                return True, f"Volume dried up ({pnl_percent:.2f}%)"
-
+        # No automatic exits - only ladder sells control when we exit
         return False, ""
 
     def calculate_pnl(self, exit_price: float) -> Dict:
@@ -564,10 +509,11 @@ class DumpTradingBot:
 
         if self.coinbase:
             if USE_LIMIT_ORDERS and USE_LADDER_BUYS:
-                # Start ladder buy at first level (most aggressive - furthest below alert)
+                # Start ladder buy at first level (most aggressive - furthest below current price)
+                # entry_price is the current price from the dump alert
                 ladder_pct = LADDER_BUY_LEVELS[0]
                 limit_buy_price = entry_price * (1 + ladder_pct / 100)
-                logger.info(f"📋 Starting LADDER BUY at ${limit_buy_price:.6f} ({ladder_pct}% from alert)")
+                logger.info(f"📋 Starting LADDER BUY at ${limit_buy_price:.6f} ({ladder_pct}% from current ${entry_price:.6f})")
                 logger.info(f"   Ladder: {' → '.join([f'{p}%' for p in LADDER_BUY_LEVELS])}")
                 buy_result = self.coinbase.limit_buy(symbol, spend_amount, limit_buy_price)
             elif USE_LIMIT_ORDERS:
@@ -629,19 +575,17 @@ class DumpTradingBot:
         logger.info(f"   Capital Remaining: ${self.capital:.2f}")
         logger.info("=" * 80)
 
-        # Send Telegram alert for position open
-        entry_alert = f"🟢 POSITION OPENED\n\n" \
-                     f"Symbol: {symbol}\n" \
-                     f"Entry: ${entry_price:.6f}\n" \
-                     f"Quantity: {quantity:.6f}\n" \
-                     f"Position Size: ${cost_basis:.2f} ({POSITION_SIZE_PERCENT}%)\n" \
-                     f"Dump: {abs(dump_pct):.2f}%\n\n" \
-                     f"Targets:\n" \
-                     f"• Min: ${min_profit_price:.6f} (+{MIN_PROFIT_TARGET}%)\n" \
-                     f"• Target: ${target_profit_price:.6f} (+{TARGET_PROFIT}%)\n" \
-                     f"• Stop: ${stop_loss_price:.6f} (-{MAX_LOSS_PERCENT}%)\n\n" \
-                     f"Positions: {len(self.positions)}/{MAX_CONCURRENT_POSITIONS}"
-        self.send_telegram_alert(entry_alert, "success")
+        # Position opened - no alert needed (will alert on final P&L only)
+        # strategy_info = "Ladder Sell: +8% → dynamic" if USE_LADDER_SELLS else f"Target: +{TARGET_PROFIT}%"
+        # entry_alert = f"🟢 POSITION OPENED\n\n" \
+        #              f"Symbol: {symbol}\n" \
+        #              f"Entry: ${entry_price:.6f}\n" \
+        #              f"Quantity: {quantity:.6f}\n" \
+        #              f"Position Size: ${cost_basis:.2f} ({POSITION_SIZE_PERCENT}%)\n" \
+        #              f"Dump: {abs(dump_pct):.2f}%\n\n" \
+        #              f"Strategy: {strategy_info}\n" \
+        #              f"Positions: {len(self.positions)}/{MAX_CONCURRENT_POSITIONS}"
+        # self.send_telegram_alert(entry_alert, "success")
 
         # Record trade entry
         self._record_trade_entry(position)
@@ -790,14 +734,14 @@ class DumpTradingBot:
                 position.status = "pending_sell"
                 logger.info(f"✅ Limit sell order placed: {position.sell_order_id}")
 
-                # Send alert
-                limit_sell_alert = f"📋 LIMIT SELL PLACED\n\n" \
-                                 f"Symbol: {symbol}\n" \
-                                 f"Limit Price: ${exit_price:.6f}\n" \
-                                 f"Quantity: {position.quantity:.6f}\n" \
-                                 f"Reason: {reason}\n" \
-                                 f"Order ID: {position.sell_order_id}"
-                self.send_telegram_alert(limit_sell_alert, "info")
+                # Limit sell placed - no alert (too noisy, only alert on final P&L)
+                # limit_sell_alert = f"📋 LIMIT SELL PLACED\n\n" \
+                #                  f"Symbol: {symbol}\n" \
+                #                  f"Limit Price: ${exit_price:.6f}\n" \
+                #                  f"Quantity: {position.quantity:.6f}\n" \
+                #                  f"Reason: {reason}\n" \
+                #                  f"Order ID: {position.sell_order_id}"
+                # self.send_telegram_alert(limit_sell_alert, "info")
                 return  # Don't close position yet - wait for fill
 
             else:
@@ -933,18 +877,18 @@ class DumpTradingBot:
 
         logger.info("=" * 80)
 
-        # Send Telegram alert for position close
-        exit_emoji = "🟢" if pnl_data['pnl_percent'] > 0 else "🔴"
-        exit_alert = f"{exit_emoji} POSITION CLOSED\n\n" \
-                    f"Symbol: {symbol}\n" \
-                    f"Entry: ${position.entry_price:.6f}\n" \
-                    f"Exit: ${exit_price:.6f} ({price_change_pct:+.2f}%)\n" \
-                    f"Time: {holding_minutes:.1f} min\n\n" \
-                    f"P&L: ${pnl_data['pnl']:+.2f} ({pnl_data['pnl_percent']:+.2f}%)\n" \
-                    f"Reason: {reason}\n\n" \
-                    f"New Capital: ${self.capital:.2f}"
-        alert_type = "success" if pnl_data['pnl_percent'] > 0 else "error"
-        self.send_telegram_alert(exit_alert, alert_type)
+        # Position close - no alert (ladder strategy handles all exits, this method is only for bot shutdown)
+        # exit_emoji = "🟢" if pnl_data['pnl_percent'] > 0 else "🔴"
+        # exit_alert = f"{exit_emoji} POSITION CLOSED\n\n" \
+        #             f"Symbol: {symbol}\n" \
+        #             f"Entry: ${position.entry_price:.6f}\n" \
+        #             f"Exit: ${exit_price:.6f} ({price_change_pct:+.2f}%)\n" \
+        #             f"Time: {holding_minutes:.1f} min\n\n" \
+        #             f"P&L: ${pnl_data['pnl']:+.2f} ({pnl_data['pnl_percent']:+.2f}%)\n" \
+        #             f"Reason: {reason}\n\n" \
+        #             f"New Capital: ${self.capital:.2f}"
+        # alert_type = "success" if pnl_data['pnl_percent'] > 0 else "error"
+        # self.send_telegram_alert(exit_alert, alert_type)
 
         # Record trade exit
         self._record_trade_exit(position, exit_price, pnl_data, reason)
@@ -992,22 +936,27 @@ class DumpTradingBot:
 
                     position.status = "open"
 
-                    # Send Telegram alert
-                    fill_alert = f"✅ LIMIT BUY FILLED\n\n" \
-                                f"Symbol: {symbol}\n" \
-                                f"Price: ${position.limit_buy_price:.6f}\n" \
-                                f"Quantity: {position.quantity:.6f}\n" \
-                                f"Order ID: {position.buy_order_id}"
-                    self.send_telegram_alert(fill_alert, "success")
+                    # Buy filled - no alert needed (will alert on final P&L only)
+                    # fill_alert = f"✅ LIMIT BUY FILLED\n\n" \
+                    #             f"Symbol: {symbol}\n" \
+                    #             f"Price: ${position.limit_buy_price:.6f}\n" \
+                    #             f"Quantity: {position.quantity:.6f}\n" \
+                    #             f"Order ID: {position.buy_order_id}"
+                    # self.send_telegram_alert(fill_alert, "success")
 
                     # IMMEDIATELY place limit sell
                     if USE_LIMIT_ORDERS and self.coinbase:
+                        # Get current price from ticker to determine ladder start
+                        # (we'll use entry_price as fallback if no ticker data available)
+                        current_price = position.entry_price
+
                         # Use ladder strategy if enabled, otherwise simple limit sell
                         if USE_LADDER_SELLS:
-                            # Start ladder at highest profit level (from actual fill price)
-                            sell_price = position.entry_price * (1 + LADDER_START_PERCENT / 100)
+                            # Start ladder at +8% above CURRENT price (not entry price)
+                            # This ensures post-only orders won't be rejected
+                            sell_price = current_price * (1 + LADDER_START_PERCENT / 100)
                             position.ladder_current_percent = LADDER_START_PERCENT
-                            logger.info(f"📋 Starting LADDER SELL at ${sell_price:.6f} (+{LADDER_START_PERCENT}%)")
+                            logger.info(f"📋 Starting LADDER SELL at ${sell_price:.6f} (+{LADDER_START_PERCENT}% above current ${current_price:.6f})")
                         else:
                             # Simple limit sell at minimum profit target
                             sell_price = position.entry_price * (1 + MIN_PROFIT_TARGET / 100)
@@ -1022,16 +971,16 @@ class DumpTradingBot:
                             position.ladder_order_time = datetime.now().isoformat()
                             logger.info(f"✅ Limit sell placed: {position.sell_order_id}")
 
-                            # Update alert
-                            strategy_label = "LADDER" if USE_LADDER_SELLS else "LIMIT"
-                            profit_pct = position.ladder_current_percent if USE_LADDER_SELLS else MIN_PROFIT_TARGET
-                            sell_alert = f"📋 {strategy_label} SELL PLACED\n\n" \
-                                       f"Symbol: {symbol}\n" \
-                                       f"Sell Price: ${sell_price:.6f} (+{profit_pct}%)\n" \
-                                       f"Order ID: {position.sell_order_id}"
-                            if USE_LADDER_SELLS:
-                                sell_alert += f"\n\nLadder: {LADDER_START_PERCENT}% → {LADDER_MIN_PERCENT}% (step {LADDER_STEP_PERCENT}%)"
-                            self.send_telegram_alert(sell_alert, "info")
+                            # Sell placed after buy fills - no alert (too noisy, only alert on final P&L)
+                            # strategy_label = "LADDER" if USE_LADDER_SELLS else "LIMIT"
+                            # profit_pct = position.ladder_current_percent if USE_LADDER_SELLS else MIN_PROFIT_TARGET
+                            # sell_alert = f"📋 {strategy_label} SELL PLACED\n\n" \
+                            #            f"Symbol: {symbol}\n" \
+                            #            f"Sell Price: ${sell_price:.6f} (+{profit_pct}%)\n" \
+                            #            f"Order ID: {position.sell_order_id}"
+                            # if USE_LADDER_SELLS:
+                            #     sell_alert += f"\n\nLadder: {LADDER_START_PERCENT}% → {LADDER_MIN_PERCENT}% (step {LADDER_STEP_PERCENT}%)"
+                            # self.send_telegram_alert(sell_alert, "info")
                         else:
                             logger.error(f"❌ Failed to place limit sell: {sell_result.get('error')}")
 
@@ -1066,29 +1015,35 @@ class DumpTradingBot:
                                     # Remove position
                                     del self.positions[symbol]
 
-                                    # Send alert
-                                    timeout_alert = f"⏰ LADDER BUY TIMEOUT\n\n" \
-                                                  f"Symbol: {symbol}\n" \
-                                                  f"Final Price: ${position.limit_buy_price:.6f}\n" \
-                                                  f"Reason: No fill after full ladder cycle\n" \
-                                                  f"Capital returned: ${position.cost_basis:.2f}"
-                                    self.send_telegram_alert(timeout_alert, "warning")
+                                    # Ladder buy timeout - no alert (too noisy, only alert on final P&L)
+                                    # timeout_alert = f"⏰ LADDER BUY TIMEOUT\n\n" \
+                                    #               f"Symbol: {symbol}\n" \
+                                    #               f"Final Price: ${position.limit_buy_price:.6f}\n" \
+                                    #               f"Reason: No fill after full ladder cycle\n" \
+                                    #               f"Capital returned: ${position.cost_basis:.2f}"
+                                    # self.send_telegram_alert(timeout_alert, "warning")
                                 else:
                                     logger.error(f"❌ Failed to cancel order {position.buy_order_id}: {cancel_result.get('error')}")
                             else:
-                                # Step up to next level (less aggressive, closer to alert price)
+                                # Step up to next level (less aggressive, closer to current price)
+                                # Get current price from ticker (use peak as best estimate)
+                                current_price = position.peak_price if position.peak_price > 0 else position.alert_price
+
                                 next_level_index = current_level + 1
                                 next_ladder_pct = LADDER_BUY_LEVELS[next_level_index]
-                                new_buy_price = position.alert_price * (1 + next_ladder_pct / 100)
+                                # Calculate from CURRENT price (not static alert price)
+                                # This ensures post-only orders won't be rejected if price has moved
+                                new_buy_price = current_price * (1 + next_ladder_pct / 100)
 
                                 logger.info(f"⏰ {symbol} ladder buy timeout - stepping up from {LADDER_BUY_LEVELS[current_level]}% to {next_ladder_pct}%")
+                                logger.info(f"   Current price (peak): ${current_price:.6f}")
 
                                 # Cancel current order
                                 cancel_result = self.coinbase.cancel_order(position.buy_order_id)
 
                                 if cancel_result.get('success'):
-                                    # Place new order at higher price
-                                    logger.info(f"📋 Placing new LADDER BUY at ${new_buy_price:.6f} ({next_ladder_pct}% from alert)")
+                                    # Place new order at higher price (calculated from current price)
+                                    logger.info(f"📋 Placing new LADDER BUY at ${new_buy_price:.6f} ({next_ladder_pct}% from current ${current_price:.6f})")
 
                                     buy_result = self.coinbase.limit_buy(symbol, position.cost_basis, new_buy_price)
 
@@ -1099,13 +1054,13 @@ class DumpTradingBot:
                                         position.ladder_buy_order_time = datetime.now().isoformat()
                                         logger.info(f"✅ New ladder buy order placed: {position.buy_order_id}")
 
-                                        # Send alert
-                                        ladder_alert = f"📈 LADDER BUY STEP UP\n\n" \
-                                                      f"Symbol: {symbol}\n" \
-                                                      f"New Price: ${new_buy_price:.6f} ({next_ladder_pct}%)\n" \
-                                                      f"Previous: {LADDER_BUY_LEVELS[current_level]}%\n" \
-                                                      f"Order ID: {position.buy_order_id}"
-                                        self.send_telegram_alert(ladder_alert, "info")
+                                        # Ladder step up - no alert (too noisy, only alert on final P&L)
+                                        # ladder_alert = f"📈 LADDER BUY STEP UP\n\n" \
+                                        #               f"Symbol: {symbol}\n" \
+                                        #               f"New Price: ${new_buy_price:.6f} ({next_ladder_pct}%)\n" \
+                                        #               f"Previous: {LADDER_BUY_LEVELS[current_level]}%\n" \
+                                        #               f"Order ID: {position.buy_order_id}"
+                                        # self.send_telegram_alert(ladder_alert, "info")
                                     else:
                                         logger.error(f"❌ Failed to place new ladder buy order: {buy_result.get('error')}")
                                         # Give up - return capital and remove position
@@ -1133,13 +1088,13 @@ class DumpTradingBot:
                                 # Remove position
                                 del self.positions[symbol]
 
-                                # Send alert
-                                timeout_alert = f"⏰ LIMIT BUY TIMEOUT\n\n" \
-                                              f"Symbol: {symbol}\n" \
-                                              f"Limit Price: ${position.limit_buy_price:.6f}\n" \
-                                              f"Reason: Order not filled after {LIMIT_ORDER_TIMEOUT_MINUTES} min\n" \
-                                              f"Capital returned: ${position.cost_basis:.2f}"
-                                self.send_telegram_alert(timeout_alert, "warning")
+                                # Legacy limit buy timeout - no alert (too noisy, only alert on final P&L)
+                                # timeout_alert = f"⏰ LIMIT BUY TIMEOUT\n\n" \
+                                #               f"Symbol: {symbol}\n" \
+                                #               f"Limit Price: ${position.limit_buy_price:.6f}\n" \
+                                #               f"Reason: Order not filled after {LIMIT_ORDER_TIMEOUT_MINUTES} min\n" \
+                                #               f"Capital returned: ${position.cost_basis:.2f}"
+                                # self.send_telegram_alert(timeout_alert, "warning")
                             else:
                                 logger.error(f"❌ Failed to cancel order {position.buy_order_id}: {cancel_result.get('error')}")
 
@@ -1180,17 +1135,17 @@ class DumpTradingBot:
                     # Update capital
                     self.capital += pnl_data['proceeds']
 
-                    # Send alert
-                    fill_alert = f"✅ {strategy_label} SELL FILLED\n\n" \
-                                f"Symbol: {symbol}\n" \
-                                f"Entry: ${position.entry_price:.6f}\n" \
-                                f"Exit: ${position.limit_sell_price:.6f}\n" \
-                                f"P&L: ${pnl_data['pnl']:+.2f} ({pnl_data['pnl_percent']:+.2f}%)\n" \
-                                f"Order ID: {position.sell_order_id}"
-                    if USE_LADDER_SELLS and position.ladder_current_percent:
-                        fill_alert += f"\n\nLadder Level: +{position.ladder_current_percent}%"
-                    alert_type = "success" if pnl_data['pnl_percent'] > 0 else "warning"
-                    self.send_telegram_alert(fill_alert, alert_type)
+                    # Ladder sell filled - no alert (too noisy, only alert on final P&L via close_position)
+                    # fill_alert = f"✅ {strategy_label} SELL FILLED\n\n" \
+                    #             f"Symbol: {symbol}\n" \
+                    #             f"Entry: ${position.entry_price:.6f}\n" \
+                    #             f"Exit: ${position.limit_sell_price:.6f}\n" \
+                    #             f"P&L: ${pnl_data['pnl']:+.2f} ({pnl_data['pnl_percent']:+.2f}%)\n" \
+                    #             f"Order ID: {position.sell_order_id}"
+                    # if USE_LADDER_SELLS and position.ladder_current_percent:
+                    #     fill_alert += f"\n\nLadder Level: +{position.ladder_current_percent}%"
+                    # alert_type = "success" if pnl_data['pnl_percent'] > 0 else "warning"
+                    # self.send_telegram_alert(fill_alert, alert_type)
 
                     # Record trade exit
                     reason = f"Ladder sell filled at +{position.ladder_current_percent}%" if USE_LADDER_SELLS else "Limit sell filled"
@@ -1215,19 +1170,26 @@ class DumpTradingBot:
 
                         # Check if ladder timeout reached
                         if minutes_elapsed >= timeout_minutes:
-                            # Calculate next ladder level
+                            # Get current price from peak (most recent price seen)
+                            # Use peak as best estimate of current price
+                            current_price = position.peak_price
+
+                            # Calculate next ladder level as +8% above CURRENT price, then step down
+                            # This ensures the sell order is always above market (valid for post-only)
                             next_percent = position.ladder_current_percent - LADDER_STEP_PERCENT
 
                             # Keep stepping down until it sells (no minimum limit)
                             logger.info(f"⏰ {symbol} ladder timeout ({timeout_minutes} min) - stepping down from +{position.ladder_current_percent}% to +{next_percent}%")
+                            logger.info(f"   Current price (peak): ${current_price:.6f}")
 
                             # Cancel current order
                             cancel_result = self.coinbase.cancel_order(position.sell_order_id)
 
                             if cancel_result.get('success'):
-                                # Place new order at lower price
-                                new_sell_price = position.entry_price * (1 + next_percent / 100)
-                                logger.info(f"📋 Placing new LADDER SELL at ${new_sell_price:.6f} (+{next_percent}%)")
+                                # Calculate sell price as +next_percent% above CURRENT price (not entry)
+                                # This ensures post-only orders won't be rejected
+                                new_sell_price = current_price * (1 + next_percent / 100)
+                                logger.info(f"📋 Placing new LADDER SELL at ${new_sell_price:.6f} (+{next_percent}% above current ${current_price:.6f})")
 
                                 sell_result = self.coinbase.limit_sell(symbol, position.quantity, new_sell_price)
 
@@ -1238,14 +1200,14 @@ class DumpTradingBot:
                                     position.ladder_order_time = datetime.now().isoformat()
                                     logger.info(f"✅ New ladder order placed: {position.sell_order_id}")
 
-                                    # Send alert
-                                    ladder_alert = f"📉 LADDER STEP DOWN\n\n" \
-                                                  f"Symbol: {symbol}\n" \
-                                                  f"New Price: ${new_sell_price:.6f} (+{next_percent}%)\n" \
-                                                  f"Previous: +{position.ladder_current_percent + LADDER_STEP_PERCENT}%\n" \
-                                                  f"Next Step: +{next_percent - LADDER_STEP_PERCENT}%\n" \
-                                                  f"Order ID: {position.sell_order_id}"
-                                    self.send_telegram_alert(ladder_alert, "info")
+                                    # Ladder step down - no alert (too noisy, only alert on final P&L)
+                                    # ladder_alert = f"📉 LADDER STEP DOWN\n\n" \
+                                    #               f"Symbol: {symbol}\n" \
+                                    #               f"New Price: ${new_sell_price:.6f} (+{next_percent}%)\n" \
+                                    #               f"Previous: +{position.ladder_current_percent + LADDER_STEP_PERCENT}%\n" \
+                                    #               f"Next Step: +{next_percent - LADDER_STEP_PERCENT}%\n" \
+                                    #               f"Order ID: {position.sell_order_id}"
+                                    # self.send_telegram_alert(ladder_alert, "info")
                                 else:
                                     logger.error(f"❌ Failed to place new ladder order: {sell_result.get('error')}")
                                     # Revert to open status

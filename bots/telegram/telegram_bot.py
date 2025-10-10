@@ -289,30 +289,17 @@ def format_price_alert(data):
         except:
             timestamp_str = f"*time:* {data['timestamp']}\n"
 
-    if data.get('event_type') == 'momentum_end':
-        # Momentum ended - no trading buttons needed
-        return (
-            f"{emoji} *MOMENTUM ENDED* {emoji}\n\n"
-            f"*Symbol:* {data['symbol']}\n"
-            f"*Peak gain:* {data['peak_change']:.2f}%\n"
-            f"*Exit at:* {data['exit_change']:.2f}%\n"
-            f"*Peak price:* ${data['peak_price']:.6f}\n"
-            f"*Exit price:* ${data['new_price']:.6f}\n"
-            f"*Duration:* {data['time_span_seconds']/60:.1f} min\n"
-            f"{timestamp_str}"
-        ), None
-    else:
-        # All other spike alerts (pump/dump) - no buttons
-        message = (
-            f"{emoji} *PRICE {spike_type.upper()} ALERT* {emoji}\n\n"
-            f"*Symbol:* {data['symbol']}\n"
-            f"*Change:* {data['pct_change']:.2f}%\n"
-            f"*Price:* ${data['old_price']:.6f} → ${data['new_price']:.6f}\n"
-            f"*Time span:* {data['time_span_seconds']:.0f}s\n"
-            f"{timestamp_str}"
-        )
+    # All spike alerts (pump/dump) - no buttons
+    message = (
+        f"{emoji} *PRICE {spike_type.upper()} ALERT* {emoji}\n\n"
+        f"*Symbol:* {data['symbol']}\n"
+        f"*Change:* {data['pct_change']:.2f}%\n"
+        f"*Price:* ${data['old_price']:.6f} → ${data['new_price']:.6f}\n"
+        f"*Time span:* {data['time_span_seconds']:.0f}s\n"
+        f"{timestamp_str}"
+    )
 
-        return message, None
+    return message, None
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -912,10 +899,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 elif action == "cancel":
                     await handle_position_action_cancel(query, product_id, chat_id)
 
-        # Test command callbacks
-        elif data.startswith("test_"):
-            from test_commands import handle_test_callbacks
-            await handle_test_callbacks(query, data)
+        # Test command callbacks - disabled (test_commands.py removed)
+        # elif data.startswith("test_"):
+        #     from test_commands import handle_test_callbacks
+        #     await handle_test_callbacks(query, data)
 
         else:
             await query.edit_message_text("❌ Unknown action")
@@ -2296,8 +2283,8 @@ async def send_alert(bot: Bot, alert_data: dict):
     # Extract product_id for persistence (only for alerts with buttons)
     product_id = alert_data.get('symbol') if 'symbol' in alert_data else None
 
-    # Skip persistence for momentum_end events and text-only alerts
-    should_persist = product_id and reply_markup and alert_data.get('event_type') != 'momentum_end'
+    # Skip persistence for text-only alerts
+    should_persist = product_id and reply_markup
 
     # Delete old alert for same product_id if it exists
     if should_persist and product_id in active_alert_cards:
@@ -2670,20 +2657,20 @@ def main() -> None:
     application.add_handler(CommandHandler("fills", fills_command))
     application.add_handler(CommandHandler("trading_stats", trading_stats_command))
 
-    # Testing commands
-    from test_commands import (
-        test_buy_flow_command,
-        test_price_simulator_command,
-        test_websocket_state_command,
-        test_position_modes_command,
-        test_full_integration_command,
-        handle_test_callbacks
-    )
-    application.add_handler(CommandHandler("testbuy", test_buy_flow_command))
-    application.add_handler(CommandHandler("testprices", test_price_simulator_command))
-    application.add_handler(CommandHandler("testwebsocket", test_websocket_state_command))
-    application.add_handler(CommandHandler("testmodes", test_position_modes_command))
-    application.add_handler(CommandHandler("testintegration", test_full_integration_command))
+    # Testing commands - disabled (test_commands.py removed)
+    # from test_commands import (
+    #     test_buy_flow_command,
+    #     test_price_simulator_command,
+    #     test_websocket_state_command,
+    #     test_position_modes_command,
+    #     test_full_integration_command,
+    #     handle_test_callbacks
+    # )
+    # application.add_handler(CommandHandler("testbuy", test_buy_flow_command))
+    # application.add_handler(CommandHandler("testprices", test_price_simulator_command))
+    # application.add_handler(CommandHandler("testwebsocket", test_websocket_state_command))
+    # application.add_handler(CommandHandler("testmodes", test_position_modes_command))
+    # application.add_handler(CommandHandler("testintegration", test_full_integration_command))
 
     # Add callback query handler for inline buttons
     application.add_handler(CallbackQueryHandler(button_callback))
