@@ -45,6 +45,47 @@ let wsHandlerProcess = null;
 let wsHandlerReady = false;
 const currentTickers = {};
 
+// Historical price data storage (in-memory circular buffer)
+// Store last 48 hours of 1-minute candles for each symbol
+const MAX_HISTORY_MINUTES = 48 * 60; // 48 hours
+const historicalData = {}; // symbol -> [{timestamp, open, high, low, close, volume}]
+
+// Helper to add price data to history
+function addToHistory(symbol, price, volume) {
+  if (!historicalData[symbol]) {
+    historicalData[symbol] = [];
+  }
+
+  const now = Date.now();
+  const currentMinute = Math.floor(now / 60000) * 60000; // Round to minute
+
+  // Check if we already have data for this minute
+  const lastCandle = historicalData[symbol][historicalData[symbol].length - 1];
+
+  if (lastCandle && lastCandle.timestamp === currentMinute) {
+    // Update existing candle
+    lastCandle.high = Math.max(lastCandle.high, price);
+    lastCandle.low = Math.min(lastCandle.low, price);
+    lastCandle.close = price;
+    lastCandle.volume += volume || 0;
+  } else {
+    // Create new candle
+    historicalData[symbol].push({
+      timestamp: currentMinute,
+      open: price,
+      high: price,
+      low: price,
+      close: price,
+      volume: volume || 0
+    });
+
+    // Trim old data (keep only MAX_HISTORY_MINUTES)
+    if (historicalData[symbol].length > MAX_HISTORY_MINUTES) {
+      historicalData[symbol].shift();
+    }
+  }
+}
+
 // Start Python WebSocket handler process
 function startPythonWebSocketHandler() {
   const pythonScript = path.join(__dirname, 'websocket-python', 'python_ws_bridge.py');
@@ -70,6 +111,9 @@ function startPythonWebSocketHandler() {
         if (line.startsWith('TICKER:')) {
           const tickerData = JSON.parse(line.substring(7));
           currentTickers[tickerData.crypto] = tickerData;
+
+          // Store in historical data
+          addToHistory(tickerData.crypto, tickerData.price, tickerData.volume_24h);
 
           // Emit to all connected Socket.IO clients
           io.emit("ticker_update", tickerData);
@@ -137,6 +181,30 @@ app.get("/tickers/:crypto", (req, res) => {
   } else {
     res.status(404).json({ error: "Ticker not found" });
   }
+});
+
+// Historical data endpoint
+app.get("/api/historical/:symbol", (req, res) => {
+  const symbol = req.params.symbol;
+  const hours = parseInt(req.query.hours) || 24;
+
+  if (!historicalData[symbol] || historicalData[symbol].length === 0) {
+    return res.status(404).json({
+      error: "No historical data available for this symbol",
+      symbol: symbol,
+      available_symbols: Object.keys(historicalData).filter(s => historicalData[s].length > 0)
+    });
+  }
+
+  // Calculate how many minutes of data to return
+  const minutesToReturn = hours * 60;
+  const allData = historicalData[symbol];
+
+  // Get the most recent data
+  const startIndex = Math.max(0, allData.length - minutesToReturn);
+  const data = allData.slice(startIndex);
+
+  res.json(data);
 });
 
 // Priority pair management endpoints

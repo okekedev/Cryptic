@@ -11,6 +11,8 @@ RUN pip install --no-cache-dir python-socketio==5.9.0 requests==2.31.0 websocket
 # Copy bot code
 COPY dump_trading_bot.py .
 COPY coinbase_client.py .
+COPY market_conditions.py .
+COPY test_market_conditions.py .
 
 # Create data directory
 RUN mkdir -p /app/data

@@ -31,30 +31,6 @@ services:
       - app-network
     restart: always
 
-  spike-detector:
-    build:
-      context: ./bots/spike-detector
-      dockerfile: Dockerfile
-    container_name: bot-spike-detector
-    depends_on:
-      - backend
-      - telegram-bot  # Direct dependency for socket connection
-    volumes:
-      - ./data:/app/data
-    env_file:
-      - .env
-    environment:
-      BACKEND_URL: http://backend:5000
-      TELEGRAM_SOCKET_URL: http://telegram-bot:8081  # Direct connection to telegram bot
-      PRICE_SPIKE_THRESHOLD: ${PRICE_SPIKE_THRESHOLD:-5.0}
-      PRICE_WINDOW_MINUTES: ${PRICE_WINDOW_MINUTES:-5}
-      WEBHOOK_URL: ${WEBHOOK_URL:-}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      DB_PATH: /app/data/spike_alerts.db
-    networks:
-      - app-network
-    restart: unless-stopped
-
   telegram-bot:
     build:
       context: ./bots/telegram
@@ -119,6 +95,27 @@ services:
   #     - app-network
   #   restart: unless-stopped
 
+  drop-detector:
+    build:
+      context: ./bots/drop-detector
+      dockerfile: Dockerfile
+    container_name: bot-drop-detector
+    depends_on:
+      - backend
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      - BACKEND_URL=http://backend:5000
+      - PRICE_DROP_THRESHOLD=${PRICE_DROP_THRESHOLD:-4.0}
+      - PRICE_WINDOW_MINUTES=${PRICE_WINDOW_MINUTES:-5}
+      - DROP_DB_PATH=/app/data/drop_detector.db
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    networks:
+      - app-network
+    restart: unless-stopped
+
   dump-trading:
     build:
       context: ./bots/dump-trading
@@ -126,8 +123,8 @@ services:
     container_name: bot-dump-trading
     depends_on:
       - backend
-      - spike-detector
       - telegram-bot
+      - drop-detector
     volumes:
       - ./data:/app/data
     env_file:

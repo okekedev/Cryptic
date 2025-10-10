@@ -37,6 +37,15 @@ except ImportError:
     logger = logging.getLogger(__name__)
     logger.warning("Coinbase client not available - live trading disabled")
 
+# Import market conditions analyzer
+try:
+    from market_conditions import get_market_conditions
+    MARKET_CONDITIONS_AVAILABLE = True
+except ImportError:
+    MARKET_CONDITIONS_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("Market conditions module not available - will trade in all conditions")
+
 # Configuration
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:5000")
 TELEGRAM_WEBHOOK_URL = os.getenv("TELEGRAM_WEBHOOK_URL", "http://telegram-bot:8080/webhook")
@@ -68,16 +77,16 @@ LIMIT_ORDER_TIMEOUT_MINUTES = float(os.getenv("LIMIT_ORDER_TIMEOUT_MINUTES", "2.
 
 # Ladder-up buy strategy (try to get better entry price)
 USE_LADDER_BUYS = os.getenv("USE_LADDER_BUYS", "yes").lower() in ("yes", "true", "1")
-# Start at -8%, step up by 0.5% every 30 seconds until -0.5%
-LADDER_BUY_LEVELS = [-8.0, -7.5, -7.0, -6.5, -6.0, -5.5, -5.0, -4.5, -4.0, -3.5, -3.0, -2.5, -2.0, -1.5, -1.0, -0.5]  # % below current price
-LADDER_BUY_TIMEOUTS = [30.0] * 16  # 30 seconds per level (16 levels, total 8 minutes)
+# Start at -3%, step up by 0.5% every 30 seconds until order fills (infinite ladder)
+LADDER_BUY_START_PERCENT = float(os.getenv("LADDER_BUY_START_PERCENT", "-3.0"))  # Start at -3%
+LADDER_BUY_STEP_PERCENT = float(os.getenv("LADDER_BUY_STEP_PERCENT", "0.5"))  # Step up 0.5%
+LADDER_BUY_TIMEOUT_SECONDS = float(os.getenv("LADDER_BUY_TIMEOUT_SECONDS", "30.0"))  # 30 seconds per level
 
 # Ladder-down sell strategy
-USE_LADDER_SELLS = os.getenv("USE_LADDER_SELLS", "no").lower() in ("yes", "true", "1")
-LADDER_START_PERCENT = float(os.getenv("LADDER_START_PERCENT", "8.0"))  # Start at +8%
-LADDER_STEP_PERCENT = float(os.getenv("LADDER_STEP_PERCENT", "1.0"))  # Step down 1%
-LADDER_TIMEOUT_MINUTES = float(os.getenv("LADDER_TIMEOUT_MINUTES", "2.0"))  # Time per level
-LADDER_MIN_PERCENT = float(os.getenv("LADDER_MIN_PERCENT", "1.0"))  # Minimum profit level
+USE_LADDER_SELLS = os.getenv("USE_LADDER_SELLS", "yes").lower() in ("yes", "true", "1")
+LADDER_SELL_START_PERCENT = float(os.getenv("LADDER_SELL_START_PERCENT", "8.0"))  # Start at +8%
+LADDER_SELL_STEP_PERCENT = float(os.getenv("LADDER_SELL_STEP_PERCENT", "0.5"))  # Step down 0.5%
+LADDER_SELL_TIMEOUT_SECONDS = float(os.getenv("LADDER_SELL_TIMEOUT_SECONDS", "30.0"))  # 30 seconds per level
 
 # Configure logging
 logging.basicConfig(
@@ -130,7 +139,7 @@ class DumpPosition:
 
     # Ladder-up buy tracking
     alert_price: float = None  # Original alert price (for ladder buy calculations)
-    ladder_buy_level_index: int = 0  # Current index in LADDER_BUY_LEVELS
+    ladder_buy_current_percent: float = None  # Current ladder buy percent (e.g., -3.0 for -3%)
     ladder_buy_order_time: str = None  # When current buy ladder order was placed
 
     # Ladder-down sell tracking
@@ -222,6 +231,11 @@ class DumpTradingBot:
         self.buy_fee_rate = DEFAULT_BUY_FEE_PERCENT / 100
         self.sell_fee_rate = DEFAULT_SELL_FEE_PERCENT / 100
 
+        # Market conditions analyzer (always enable for comprehensive filtering)
+        self.market_conditions = get_market_conditions(BACKEND_URL, DB_PATH) if MARKET_CONDITIONS_AVAILABLE else None
+        self.last_conditions_check = None
+        self.conditions_check_interval_minutes = 5  # Re-check every 5 minutes
+
         # Initialize Coinbase client for live trading
         self.coinbase = None
         if AUTO_TRADE and COINBASE_AVAILABLE:
@@ -262,17 +276,20 @@ class DumpTradingBot:
         logger.info(f"Limit Orders: {'ENABLED' if USE_LIMIT_ORDERS else 'DISABLED (market orders)'}")
         logger.info(f"Ladder Buys: {'ENABLED' if USE_LADDER_BUYS else 'DISABLED'}")
         if USE_LADDER_BUYS:
-            logger.info(f"  Levels: {' → '.join([f'{p}%' for p in LADDER_BUY_LEVELS])}")
-            logger.info(f"  Timeouts: {' → '.join([f'{int(t)}s' for t in LADDER_BUY_TIMEOUTS])}")
+            logger.info(f"  Start: {LADDER_BUY_START_PERCENT}%, Step: +{LADDER_BUY_STEP_PERCENT}%, Timeout: {LADDER_BUY_TIMEOUT_SECONDS}s")
+            logger.info(f"  Strategy: Infinite ladder (continues until filled)")
         elif USE_LIMIT_ORDERS:
             logger.info(f"  Buy Extra: {DUMP_LIMIT_BUY_EXTRA}% lower than alert")
             logger.info(f"  Order Timeout: {LIMIT_ORDER_TIMEOUT_MINUTES} min")
         logger.info(f"Ladder Sells: {'ENABLED' if USE_LADDER_SELLS else 'DISABLED'}")
         if USE_LADDER_SELLS:
-            logger.info(f"  Start: +{LADDER_START_PERCENT}%, Step: -{LADDER_STEP_PERCENT}%, Min: +{LADDER_MIN_PERCENT}%")
-            logger.info(f"  Timeout: {LADDER_TIMEOUT_MINUTES} min per level")
+            logger.info(f"  Start: +{LADDER_SELL_START_PERCENT}%, Step: -{LADDER_SELL_STEP_PERCENT}%, Timeout: {LADDER_SELL_TIMEOUT_SECONDS}s")
+            logger.info(f"  Strategy: Infinite ladder (continues until filled, can go negative)")
         logger.info(f"TA-Lib Available: {TALIB_AVAILABLE}")
         logger.info(f"Telegram Alerts: {'ENABLED' if TELEGRAM_WEBHOOK_URL else 'DISABLED'}")
+        logger.info(f"Market Conditions: {'ENABLED' if MARKET_CONDITIONS_AVAILABLE else 'DISABLED'}")
+        if MARKET_CONDITIONS_AVAILABLE:
+            logger.info(f"  Auto-filter: Checks volatility, trend, RSI, volume, session, performance")
         logger.info("=" * 60)
 
     def _init_db(self):
@@ -419,6 +436,27 @@ class DumpTradingBot:
             logger.info(f"⏭️  Max concurrent positions ({MAX_CONCURRENT_POSITIONS}) reached, skipping {symbol}")
             return
 
+        # ===  MARKET CONDITIONS CHECK ===
+        if self.market_conditions:
+            conditions = self.market_conditions.should_trade()
+
+            if not conditions['enabled']:
+                logger.warning(f"⏭️  Market conditions unfavorable - skipping {symbol}")
+                logger.warning(f"   Reason: {conditions['reason']}")
+                logger.warning(f"   Score: {conditions['score']}/100 (need 50+)")
+
+                # Send alert only on first rejection or state change
+                if conditions.get('state_changed'):
+                    alert_msg = f"🔴 TRADING DISABLED\n\n"
+                    alert_msg += self.market_conditions.get_detailed_status()
+                    alert_msg += f"\n\nDump alert skipped: {symbol} ({abs(dump_pct):.2f}%)"
+                    self.send_telegram_alert(alert_msg, "warning")
+
+                return
+
+            # Log that conditions are favorable
+            logger.info(f"✅ Market conditions favorable (score: {conditions['score']}/100)")
+
         # Check AUTO_TRADE flag - if disabled, only send alert
         if not AUTO_TRADE:
             alert_msg = f"🚨 DUMP ALERT (AUTO-TRADE DISABLED)\n\n" \
@@ -511,10 +549,10 @@ class DumpTradingBot:
             if USE_LIMIT_ORDERS and USE_LADDER_BUYS:
                 # Start ladder buy at first level (most aggressive - furthest below current price)
                 # entry_price is the current price from the dump alert
-                ladder_pct = LADDER_BUY_LEVELS[0]
+                ladder_pct = LADDER_BUY_START_PERCENT
                 limit_buy_price = entry_price * (1 + ladder_pct / 100)
                 logger.info(f"📋 Starting LADDER BUY at ${limit_buy_price:.6f} ({ladder_pct}% from current ${entry_price:.6f})")
-                logger.info(f"   Ladder: {' → '.join([f'{p}%' for p in LADDER_BUY_LEVELS])}")
+                logger.info(f"   Strategy: Infinite ladder starting at {LADDER_BUY_START_PERCENT}%, stepping up {LADDER_BUY_STEP_PERCENT}% every {LADDER_BUY_TIMEOUT_SECONDS}s")
                 buy_result = self.coinbase.limit_buy(symbol, spend_amount, limit_buy_price)
             elif USE_LIMIT_ORDERS:
                 # Legacy: simple limit buy
@@ -564,7 +602,7 @@ class DumpTradingBot:
             limit_buy_price=limit_buy_price,
             order_placed_time=datetime.now().isoformat() if buy_order_id else None,
             alert_price=entry_price,  # Store original alert price
-            ladder_buy_level_index=0,  # Start at first ladder level
+            ladder_buy_current_percent=LADDER_BUY_START_PERCENT if (USE_LADDER_BUYS and buy_order_id) else None,
             ladder_buy_order_time=datetime.now().isoformat() if (USE_LADDER_BUYS and buy_order_id) else None
         )
 
@@ -954,9 +992,9 @@ class DumpTradingBot:
                         if USE_LADDER_SELLS:
                             # Start ladder at +8% above CURRENT price (not entry price)
                             # This ensures post-only orders won't be rejected
-                            sell_price = current_price * (1 + LADDER_START_PERCENT / 100)
-                            position.ladder_current_percent = LADDER_START_PERCENT
-                            logger.info(f"📋 Starting LADDER SELL at ${sell_price:.6f} (+{LADDER_START_PERCENT}% above current ${current_price:.6f})")
+                            sell_price = current_price * (1 + LADDER_SELL_START_PERCENT / 100)
+                            position.ladder_current_percent = LADDER_SELL_START_PERCENT
+                            logger.info(f"📋 Starting LADDER SELL at ${sell_price:.6f} (+{LADDER_SELL_START_PERCENT}% above current ${current_price:.6f})")
                         else:
                             # Simple limit sell at minimum profit target
                             sell_price = position.entry_price * (1 + MIN_PROFIT_TARGET / 100)
@@ -990,84 +1028,43 @@ class DumpTradingBot:
                         order_placed = datetime.fromisoformat(position.ladder_buy_order_time)
                         seconds_elapsed = (datetime.now() - order_placed).total_seconds()
 
-                        # Determine timeout based on ladder level
-                        current_level = position.ladder_buy_level_index
-                        is_final_level = (current_level == len(LADDER_BUY_LEVELS) - 1)
-
-                        # Get timeout for current level
-                        timeout_seconds = LADDER_BUY_TIMEOUTS[current_level] if current_level < len(LADDER_BUY_TIMEOUTS) else 120.0
-
                         # Check if timeout reached
-                        if seconds_elapsed >= timeout_seconds:
-                            # If at final level, give up
-                            if is_final_level:
-                                logger.warning(f"⏰ {symbol} ladder buy final timeout - giving up")
+                        if seconds_elapsed >= LADDER_BUY_TIMEOUT_SECONDS:
+                            # Step up to next level (infinite ladder - no final level)
+                            # Get current price from ticker (use peak as best estimate)
+                            current_price = position.peak_price if position.peak_price > 0 else position.alert_price
 
-                                # Cancel the limit order
-                                cancel_result = self.coinbase.cancel_order(position.buy_order_id)
+                            current_ladder_pct = position.ladder_buy_current_percent
+                            next_ladder_pct = current_ladder_pct + LADDER_BUY_STEP_PERCENT
+                            # Calculate from CURRENT price (not static alert price)
+                            # This ensures post-only orders won't be rejected if price has moved
+                            new_buy_price = current_price * (1 + next_ladder_pct / 100)
 
-                                if cancel_result.get('success'):
-                                    logger.info(f"🚫 {symbol} ladder buy cancelled - removing position")
+                            logger.info(f"⏰ {symbol} ladder buy timeout - stepping up from {current_ladder_pct}% to {next_ladder_pct}%")
+                            logger.info(f"   Current price (peak): ${current_price:.6f}")
 
-                                    # Return capital
+                            # Cancel current order
+                            cancel_result = self.coinbase.cancel_order(position.buy_order_id)
+
+                            if cancel_result.get('success'):
+                                # Place new order at higher price (calculated from current price)
+                                logger.info(f"📋 Placing new LADDER BUY at ${new_buy_price:.6f} ({next_ladder_pct}% from current ${current_price:.6f})")
+
+                                buy_result = self.coinbase.limit_buy(symbol, position.cost_basis, new_buy_price)
+
+                                if buy_result.get('success'):
+                                    position.buy_order_id = buy_result.get('order_id')
+                                    position.limit_buy_price = new_buy_price
+                                    position.ladder_buy_current_percent = next_ladder_pct
+                                    position.ladder_buy_order_time = datetime.now().isoformat()
+                                    logger.info(f"✅ New ladder buy order placed: {position.buy_order_id}")
+                                else:
+                                    logger.error(f"❌ Failed to place new ladder buy order: {buy_result.get('error')}")
+                                    # Give up - return capital and remove position
                                     self.capital += position.cost_basis
-
-                                    # Remove position
                                     del self.positions[symbol]
-
-                                    # Ladder buy timeout - no alert (too noisy, only alert on final P&L)
-                                    # timeout_alert = f"⏰ LADDER BUY TIMEOUT\n\n" \
-                                    #               f"Symbol: {symbol}\n" \
-                                    #               f"Final Price: ${position.limit_buy_price:.6f}\n" \
-                                    #               f"Reason: No fill after full ladder cycle\n" \
-                                    #               f"Capital returned: ${position.cost_basis:.2f}"
-                                    # self.send_telegram_alert(timeout_alert, "warning")
-                                else:
-                                    logger.error(f"❌ Failed to cancel order {position.buy_order_id}: {cancel_result.get('error')}")
                             else:
-                                # Step up to next level (less aggressive, closer to current price)
-                                # Get current price from ticker (use peak as best estimate)
-                                current_price = position.peak_price if position.peak_price > 0 else position.alert_price
-
-                                next_level_index = current_level + 1
-                                next_ladder_pct = LADDER_BUY_LEVELS[next_level_index]
-                                # Calculate from CURRENT price (not static alert price)
-                                # This ensures post-only orders won't be rejected if price has moved
-                                new_buy_price = current_price * (1 + next_ladder_pct / 100)
-
-                                logger.info(f"⏰ {symbol} ladder buy timeout - stepping up from {LADDER_BUY_LEVELS[current_level]}% to {next_ladder_pct}%")
-                                logger.info(f"   Current price (peak): ${current_price:.6f}")
-
-                                # Cancel current order
-                                cancel_result = self.coinbase.cancel_order(position.buy_order_id)
-
-                                if cancel_result.get('success'):
-                                    # Place new order at higher price (calculated from current price)
-                                    logger.info(f"📋 Placing new LADDER BUY at ${new_buy_price:.6f} ({next_ladder_pct}% from current ${current_price:.6f})")
-
-                                    buy_result = self.coinbase.limit_buy(symbol, position.cost_basis, new_buy_price)
-
-                                    if buy_result.get('success'):
-                                        position.buy_order_id = buy_result.get('order_id')
-                                        position.limit_buy_price = new_buy_price
-                                        position.ladder_buy_level_index = next_level_index
-                                        position.ladder_buy_order_time = datetime.now().isoformat()
-                                        logger.info(f"✅ New ladder buy order placed: {position.buy_order_id}")
-
-                                        # Ladder step up - no alert (too noisy, only alert on final P&L)
-                                        # ladder_alert = f"📈 LADDER BUY STEP UP\n\n" \
-                                        #               f"Symbol: {symbol}\n" \
-                                        #               f"New Price: ${new_buy_price:.6f} ({next_ladder_pct}%)\n" \
-                                        #               f"Previous: {LADDER_BUY_LEVELS[current_level]}%\n" \
-                                        #               f"Order ID: {position.buy_order_id}"
-                                        # self.send_telegram_alert(ladder_alert, "info")
-                                    else:
-                                        logger.error(f"❌ Failed to place new ladder buy order: {buy_result.get('error')}")
-                                        # Give up - return capital and remove position
-                                        self.capital += position.cost_basis
-                                        del self.positions[symbol]
-                                else:
-                                    logger.error(f"❌ Failed to cancel ladder order: {cancel_result.get('error')}")
+                                logger.error(f"❌ Failed to cancel ladder order: {cancel_result.get('error')}")
                     else:
                         # Legacy timeout handling (non-ladder)
                         order_placed = datetime.fromisoformat(position.order_placed_time)
@@ -1158,28 +1155,20 @@ class DumpTradingBot:
                 elif status == 'OPEN':
                     if USE_LADDER_SELLS and position.ladder_order_time and position.ladder_current_percent:
                         order_placed = datetime.fromisoformat(position.ladder_order_time)
-                        minutes_elapsed = (datetime.now() - order_placed).total_seconds() / 60
-
-                        # Dynamic timeout based on profit level
-                        # Above +3%: 1 minute per level (fast exit at good profits)
-                        # At/below +3%: 2 minutes per level (more patient near minimum)
-                        if position.ladder_current_percent > 3.0:
-                            timeout_minutes = 1.0
-                        else:
-                            timeout_minutes = 2.0
+                        seconds_elapsed = (datetime.now() - order_placed).total_seconds()
 
                         # Check if ladder timeout reached
-                        if minutes_elapsed >= timeout_minutes:
+                        if seconds_elapsed >= LADDER_SELL_TIMEOUT_SECONDS:
                             # Get current price from peak (most recent price seen)
                             # Use peak as best estimate of current price
                             current_price = position.peak_price
 
-                            # Calculate next ladder level as +8% above CURRENT price, then step down
+                            # Calculate next ladder level - step down from current level
                             # This ensures the sell order is always above market (valid for post-only)
-                            next_percent = position.ladder_current_percent - LADDER_STEP_PERCENT
+                            next_percent = position.ladder_current_percent - LADDER_SELL_STEP_PERCENT
 
-                            # Keep stepping down until it sells (no minimum limit)
-                            logger.info(f"⏰ {symbol} ladder timeout ({timeout_minutes} min) - stepping down from +{position.ladder_current_percent}% to +{next_percent}%")
+                            # Keep stepping down until it sells (no minimum limit - infinite ladder)
+                            logger.info(f"⏰ {symbol} ladder timeout ({LADDER_SELL_TIMEOUT_SECONDS}s) - stepping down from +{position.ladder_current_percent}% to +{next_percent}%")
                             logger.info(f"   Current price (peak): ${current_price:.6f}")
 
                             # Cancel current order
@@ -1432,7 +1421,12 @@ class DumpTradingBot:
             summary += f"   Worst: ${stats['worst_trade']:+,.2f}\n"
             summary += f"   Avg: ${stats['avg_pnl']:+,.2f}\n\n"
 
-        summary += f"🔄 Open Positions: {len(self.positions)}/{MAX_CONCURRENT_POSITIONS}\n"
+        summary += f"🔄 Open Positions: {len(self.positions)}/{MAX_CONCURRENT_POSITIONS}\n\n"
+
+        # Add market conditions status
+        if self.market_conditions:
+            summary += "─" * 30 + "\n"
+            summary += self.market_conditions.get_detailed_status()
 
         self.send_telegram_alert(summary, "info")
         logger.info("📤 Daily summary sent")
@@ -1488,6 +1482,39 @@ class DumpTradingBot:
         thread.start()
         logger.info(f"📋 Pending orders monitor started (checks every 10s)")
 
+    def monitor_market_conditions(self):
+        """Background thread to monitor market conditions and send alerts on state changes"""
+        def monitor():
+            while self.running:
+                try:
+                    if self.market_conditions:
+                        # Check conditions
+                        conditions = self.market_conditions.should_trade()
+
+                        # Send alert if state changed
+                        if conditions.get('state_changed'):
+                            if conditions['enabled']:
+                                alert_msg = "🟢 TRADING ENABLED\n\n"
+                                alert_msg += self.market_conditions.get_detailed_status()
+                                self.send_telegram_alert(alert_msg, "success")
+                                logger.info("🟢 Market conditions improved - Trading enabled")
+                            else:
+                                alert_msg = "🔴 TRADING DISABLED\n\n"
+                                alert_msg += self.market_conditions.get_detailed_status()
+                                self.send_telegram_alert(alert_msg, "warning")
+                                logger.warning("🔴 Market conditions deteriorated - Trading disabled")
+
+                    # Check every 5 minutes
+                    time.sleep(300)
+
+                except Exception as e:
+                    logger.error(f"Error in market conditions monitor: {e}")
+                    time.sleep(300)
+
+        thread = threading.Thread(target=monitor, daemon=True)
+        thread.start()
+        logger.info(f"📊 Market conditions monitor started (checks every 5 min)")
+
     def run(self):
         """Main bot loop"""
         try:
@@ -1497,6 +1524,10 @@ class DumpTradingBot:
             # Start pending orders monitor
             if USE_LIMIT_ORDERS:
                 self.monitor_pending_orders()
+
+            # Start market conditions monitor
+            if self.market_conditions:
+                self.monitor_market_conditions()
 
             # Connect to WebSocket and start trading
             self.connect_websocket()
