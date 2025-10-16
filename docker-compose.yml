@@ -1,198 +1,67 @@
 services:
-  frontend:
-    build:
-      context: ./frontend
-      target: production
-    container_name: bot-frontend
+  # UNIFIED SERVICE - All bots in one container!
+  trading-bot:
+    build: ./websocket-service
+    container_name: trading-bot-unified
     ports:
-      - "3005:80"
-    depends_on:
-      - backend
-    networks:
-      - app-network
-    restart: always
-
-  backend:
-    build: ./backend
-    container_name: bot-backend
-    ports:
-      - "5000:5000"
+      - "5001:5000"   # FastAPI REST API + WebSocket streaming (external 5001 -> internal 5000)
+      - "8082:8080"   # Telegram webhook server (external 8082 -> internal 8080)
+      - "8083:8081"   # Direct Socket.IO for spike alerts (external 8083 -> internal 8081)
     volumes:
-      - ./data:/app/data
+      - ./data:/app/data  # Shared databases
     env_file:
       - .env
     environment:
+      # WebSocket & Coinbase streaming
       WS_URL: wss://advanced-trade-ws.coinbase.com
       USE_ALL_USD_PAIRS: "true"
       VOLUME_THRESHOLD: ${VOLUME_THRESHOLD:-1.5}
       WINDOW_MINUTES: ${WINDOW_MINUTES:-5}
-      EMIT_RAW_TRADES: ${EMIT_RAW_TRADES:-false}
-    networks:
-      - app-network
-    restart: always
 
-  telegram-bot:
-    build:
-      context: ./bots/telegram
-      dockerfile: Dockerfile
-    container_name: bot-telegram-bot
-    depends_on:
-      - backend
-    ports:
-      - "8080:8080"  # Webhook server
-      - "8081:8081"  # Direct Socket.IO server for spike alerts
-    volumes:
-      - ./data:/app/data  # Mount data directory for databases
-    env_file:
-      - .env
-    environment:
+      # Telegram Bot
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
       ALERTS_CHANNEL_ID: ${ALERTS_CHANNEL_ID:-}
-      BACKEND_URL: http://backend:5000
       WEBHOOK_PORT: "8080"
       SPIKE_SOCKET_PORT: "8081"
+
+      # Coinbase Trading API
+      COINBASE_API_KEY: ${COINBASE_API_KEY}
+      COINBASE_SIGNING_KEY: ${COINBASE_SIGNING_KEY}
+
+      # Drop Detector Settings
+      PRICE_DROP_THRESHOLD: ${PRICE_DROP_THRESHOLD:-4.0}
+      PRICE_WINDOW_MINUTES: ${PRICE_WINDOW_MINUTES:-5}
+      DROP_DB_PATH: /app/data/drop_detector.db
+
+      # Dump Trading Settings
+      AUTO_TRADE: ${AUTO_TRADE:-no}
+      DUMP_POSITION_SIZE_PERCENT: ${DUMP_POSITION_SIZE_PERCENT:-25.0}
+      DUMP_MAX_CONCURRENT_POSITIONS: ${DUMP_MAX_CONCURRENT_POSITIONS:-4}
+      DUMP_MAX_LOSS_PERCENT: ${DUMP_MAX_LOSS_PERCENT:-3.0}
+      DUMP_MIN_PROFIT_TARGET: ${DUMP_MIN_PROFIT_TARGET:-2.0}
+      DUMP_TARGET_PROFIT: ${DUMP_TARGET_PROFIT:-4.0}
+      DUMP_TRAILING_THRESHOLD: ${DUMP_TRAILING_THRESHOLD:-0.7}
+      DUMP_MIN_HOLD_TIME_MINUTES: ${DUMP_MIN_HOLD_TIME_MINUTES:-5.0}
+      DUMP_MAX_HOLD_TIME_MINUTES: ${DUMP_MAX_HOLD_TIME_MINUTES:-15.0}
+      VOLUME_SURGE_THRESHOLD: ${VOLUME_SURGE_THRESHOLD:-1.5}
+      RSI_OVERBOUGHT: ${RSI_OVERBOUGHT:-70.0}
+      SMA_PERIOD: ${SMA_PERIOD:-5}
+      DEFAULT_BUY_FEE_PERCENT: ${DEFAULT_BUY_FEE_PERCENT:-0.6}
+      DEFAULT_SELL_FEE_PERCENT: ${DEFAULT_SELL_FEE_PERCENT:-0.4}
+      USE_LIMIT_ORDERS: ${USE_LIMIT_ORDERS:-yes}
+      LIMIT_BUY_EXTRA_PCT: ${LIMIT_BUY_EXTRA_PCT:-1.0}
+      LIMIT_ORDER_TIMEOUT_MINUTES: ${LIMIT_ORDER_TIMEOUT_MINUTES:-2.0}
+      DUMP_DB_PATH: /app/data/dump_trading.db
+
+      # General Settings
+      BACKEND_URL: http://localhost:5000
+      TELEGRAM_WEBHOOK_URL: http://localhost:8080/webhook
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
     networks:
       - app-network
     restart: unless-stopped
-
-  # trading-bot: Disabled - telegram-bot handles trading directly via TradingManager
-  # trading-bot:
-  #   build: ./bots/trading
-  #   env_file:
-  #     - .env
-  #   networks:
-  #     - app-network
-  #   restart: always
-
-  # DISABLED: Paper trading bot (pump strategy) - not profitable
-  # Focus on dump-trading bot with optimized parameters instead
-  # paper-trading:
-  #   build:
-  #     context: ./bots/paper-trading
-  #     dockerfile: Dockerfile
-  #   depends_on:
-  #     - backend
-  #     - spike-detector
-  #   volumes:
-  #     - ./data:/app/data
-  #   env_file:
-  #     - .env
-  #   environment:
-  #     - BACKEND_URL=http://backend:5000
-  #     - INITIAL_CAPITAL=${INITIAL_CAPITAL:-10000.0}
-  #     - POSITION_SIZE_PERCENT=${POSITION_SIZE_PERCENT:-10.0}
-  #     - MIN_PROFIT_TARGET=${MIN_PROFIT_TARGET:-3.0}
-  #     - TRAILING_THRESHOLD=${TRAILING_THRESHOLD:-1.5}
-  #     - MIN_HOLD_TIME_MINUTES=${MIN_HOLD_TIME_MINUTES:-30.0}
-  #     - STOP_LOSS_PERCENT=${STOP_LOSS_PERCENT:-5.0}
-  #     - BUY_FEE_PERCENT=${BUY_FEE_PERCENT:-0.6}
-  #     - SELL_FEE_PERCENT=${SELL_FEE_PERCENT:-0.4}
-  #     - DB_PATH=/app/data/paper_trading.db
-  #     - LOG_LEVEL=${LOG_LEVEL:-INFO}
-  #   networks:
-  #     - app-network
-  #   restart: unless-stopped
-
-  drop-detector:
-    build:
-      context: ./bots/drop-detector
-      dockerfile: Dockerfile
-    container_name: bot-drop-detector
-    depends_on:
-      - backend
-    volumes:
-      - ./data:/app/data
-    env_file:
-      - .env
-    environment:
-      - BACKEND_URL=http://backend:5000
-      - PRICE_DROP_THRESHOLD=${PRICE_DROP_THRESHOLD:-4.0}
-      - PRICE_WINDOW_MINUTES=${PRICE_WINDOW_MINUTES:-5}
-      - DROP_DB_PATH=/app/data/drop_detector.db
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-    networks:
-      - app-network
-    restart: unless-stopped
-
-  dump-trading:
-    build:
-      context: ./bots/dump-trading
-      dockerfile: Dockerfile
-    container_name: bot-dump-trading
-    depends_on:
-      - backend
-      - telegram-bot
-      - drop-detector
-    volumes:
-      - ./data:/app/data
-    env_file:
-      - .env
-    environment:
-      - BACKEND_URL=http://backend:5000
-      - TELEGRAM_WEBHOOK_URL=http://telegram-bot:8080/webhook
-      - AUTO_TRADE=${AUTO_TRADE:-no}  # Safety: Auto-trading disabled by default
-      - COINBASE_API_KEY=${COINBASE_API_KEY}
-      - COINBASE_SIGNING_KEY=${COINBASE_SIGNING_KEY}
-      - DUMP_POSITION_SIZE_PERCENT=${DUMP_POSITION_SIZE_PERCENT:-25.0}  # 25% per trade for 4 positions
-      - DUMP_MAX_CONCURRENT_POSITIONS=${DUMP_MAX_CONCURRENT_POSITIONS:-4}  # Allow up to 4 trades
-      - DUMP_MAX_LOSS_PERCENT=${DUMP_MAX_LOSS_PERCENT:-3.0}  # OPTIMIZED: Wider stop loss
-      - DUMP_MIN_PROFIT_TARGET=${DUMP_MIN_PROFIT_TARGET:-2.0}  # OPTIMIZED: Lower min profit
-      - DUMP_TARGET_PROFIT=${DUMP_TARGET_PROFIT:-4.0}  # OPTIMIZED: Realistic target
-      - DUMP_TRAILING_THRESHOLD=${DUMP_TRAILING_THRESHOLD:-0.7}  # OPTIMIZED: Wider trailing
-      - DUMP_MIN_HOLD_TIME_MINUTES=${DUMP_MIN_HOLD_TIME_MINUTES:-5.0}  # OPTIMIZED
-      - DUMP_MAX_HOLD_TIME_MINUTES=${DUMP_MAX_HOLD_TIME_MINUTES:-15.0}  # OPTIMIZED: Tighter max
-      - VOLUME_SURGE_THRESHOLD=${VOLUME_SURGE_THRESHOLD:-1.5}
-      - RSI_OVERBOUGHT=${RSI_OVERBOUGHT:-70.0}
-      - SMA_PERIOD=${SMA_PERIOD:-5}
-      - DEFAULT_BUY_FEE_PERCENT=${DEFAULT_BUY_FEE_PERCENT:-0.6}
-      - DEFAULT_SELL_FEE_PERCENT=${DEFAULT_SELL_FEE_PERCENT:-0.4}
-      - USE_LIMIT_ORDERS=${USE_LIMIT_ORDERS:-yes}  # Use limit orders for lower fees
-      - LIMIT_BUY_EXTRA_PCT=${LIMIT_BUY_EXTRA_PCT:-1.0}  # Buy 1% lower than alert
-      - LIMIT_ORDER_TIMEOUT_MINUTES=${LIMIT_ORDER_TIMEOUT_MINUTES:-2.0}  # Cancel timeout
-      - DUMP_DB_PATH=/app/data/dump_trading.db
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-    networks:
-      - app-network
-    restart: unless-stopped
-
-  ngrok:
-    image: ngrok/ngrok:alpine
-    container_name: bot-ngrok
-    command: http frontend:80
-    ports:
-      - "4040:4040"
-    environment:
-      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
-    depends_on:
-      - frontend
-    networks:
-      - app-network
-    restart: unless-stopped
-
-  # log-monitor:
-  #   build: 
-  #     context: ./bots/logs-monitor
-  #     dockerfile: Dockerfile
-  #   depends_on:
-  #     - telegram-bot
-  #     - backend 
-  #     - spike-detector
-  #   volumes: 
-  #     # For Windows, use named pipe instead of unix socket
-  #     - //var/run/docker.sock:/var/run/docker.sock:ro
-  #   environment:
-  #     - TELEGRAM_WEBHOOK_URL=http://telegram-bot:8080/webhook
-  #     - MONITOR_INTERVAL=30
-  #     - LOG_LEVEL=${LOG_LEVEL:-INFO}
-  #     # Add Docker host for Windows
-  #     - DOCKER_HOST=unix:///var/run/docker.sock
-  #   networks:
-  #     - app-network
-  #   restart: unless-stopped
-
- # Use nodemon for auto-reload
 
 networks:
   app-network:

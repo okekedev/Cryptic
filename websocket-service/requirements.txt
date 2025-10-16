@@ -1,0 +1,27 @@
+# FastAPI / Web Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+
+# WebSocket clients
+websockets>=12.0
+websocket-client==1.6.4
+python-socketio==5.11.0
+
+# HTTP clients
+aiohttp==3.10.5
+requests==2.31.0
+
+# Coinbase trading
+coinbase-advanced-py>=1.2.0
+
+# Cryptography & Auth
+PyJWT==2.8.0
+cryptography>=42.0.4
+
+# Technical analysis
+numpy==1.24.3
+TA-Lib==0.4.32
+
+# Environment & Utils
+python-dotenv==1.0.1
