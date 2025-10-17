@@ -197,12 +197,25 @@ class DumpPosition:
 
     def should_exit(self, current_price: float, current_volume: float = 0, avg_volume: float = 0) -> tuple[bool, str]:
         """
-        Check if position should be exited
+        Check if position should be exited - SIMPLIFIED
 
-        DISABLED: All automatic exits disabled - only ladder sell strategy controls exits
-        The ladder sell will step down from +8% to any level (including negative) until it fills
+        Only protection: Hard stop loss at -4% after 5 minutes
+        All other exits handled by ladder sell strategy
         """
-        # No automatic exits - only ladder sells control when we exit
+        from datetime import datetime
+
+        # Calculate time held
+        entry_time = datetime.fromisoformat(self.entry_time)
+        time_held_minutes = (datetime.now() - entry_time).total_seconds() / 60
+
+        # Calculate current P&L
+        price_change_pct = ((current_price - self.entry_price) / self.entry_price) * 100
+
+        # HARD STOP LOSS (-4%) after 5 minutes - Critical protection only
+        if time_held_minutes >= 5.0 and price_change_pct <= -4.0:
+            return True, "Stop loss -4% (market sell)"
+
+        # Otherwise, let ladder sell handle the exit
         return False, ""
 
     def calculate_pnl(self, exit_price: float) -> Dict:

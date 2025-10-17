@@ -1,0 +1,473 @@
+================================================================================
+REALISTIC BACKTEST: Actual Price Data
+================================================================================
+
+Loaded 1489 minute candles
+Analyzing 89 dump alerts
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BTC CONDITIONS (for BTC-Only strategy)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Score: 0/100
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ANALYZING DUMPS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[1/89] ASM-USD @ $0.01429 (-3.12%)
+  Score: 50/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ -7.00% (Ladder sell @ +-7.0%)
+
+[2/89] ZKC-USD @ $0.2584 (-3.04%)
+  Score: 55/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[3/89] GTC-USD @ $0.2 (-4.76%)
+  ⚠️ Insufficient data
+
+[4/89] USELESS-USD @ $0.2808 (-3.01%)
+  Score: 95/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[5/89] TROLL-USD @ $0.0816 (-3.77%)
+  Score: 80/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[6/89] GODS-USD @ $0.10646 (-3.56%)
+  Score: 85/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[7/89] TRAC-USD @ $0.6572 (-4.44%)
+  Score: 60/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[8/89] PLU-USD @ $0.31 (-3.13%)
+  ⚠️ Insufficient data
+
+[9/89] GODS-USD @ $0.10172 (-5.18%)
+  Score: 85/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[10/89] ASM-USD @ $0.01551 (-3.06%)
+  Score: 50/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ -4.00% (Stop loss -4%)
+
+[11/89] OMNI-USD @ $2.11 (-3.08%)
+  Score: 70/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[12/89] MAGIC-USD @ $0.15 (-4.76%)
+  Score: 50/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ -7.00% (Ladder sell @ +-7.0%)
+
+[13/89] GST-USD @ $0.003545 (-3.06%)
+  Score: 45/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ❌ BLOCKED
+
+[14/89] PLU-USD @ $0.29 (-9.38%)
+  ⚠️ Insufficient data
+
+[15/89] GODS-USD @ $0.10335 (-3.40%)
+  Score: 85/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[16/89] ASM-USD @ $0.01456 (-6.96%)
+  Score: 50/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ -7.00% (Ladder sell @ +-7.0%)
+
+[17/89] HONEY-USD @ $0.0106 (-3.64%)
+  Score: 40/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ❌ BLOCKED
+
+[18/89] MAGIC-USD @ $0.1456 (-4.40%)
+  Score: 50/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[19/89] ASM-USD @ $0.01465 (-3.04%)
+  Score: 50/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ -7.00% (Ladder sell @ +-7.0%)
+
+[20/89] LRDS-USD @ $0.085 (-4.06%)
+  Score: 30/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ❌ BLOCKED
+
+[21/89] MAMO-USD @ $0.05158 (-3.05%)
+  Score: 65/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[22/89] PNG-USD @ $0.07811 (-4.98%)
+  Score: 90/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[23/89] ASM-USD @ $0.01492 (-3.31%)
+  Score: 50/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ -7.00% (Ladder sell @ +-7.0%)
+
+[24/89] PLU-USD @ $0.29 (-3.33%)
+  ⚠️ Insufficient data
+
+[25/89] LOKA-USD @ $0.1166 (-3.72%)
+  Score: 65/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[26/89] ASM-USD @ $0.01457 (-4.40%)
+  Score: 40/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ❌ BLOCKED
+
+[27/89] PNG-USD @ $0.07801 (-4.01%)
+  Score: 90/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[28/89] ZKC-USD @ $0.2661 (-3.10%)
+  Score: 65/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[29/89] LOKA-USD @ $0.117 (-3.15%)
+  Score: 65/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[30/89] ASM-USD @ $0.01411 (-3.36%)
+  Score: 50/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[31/89] PLU-USD @ $0.29 (-3.33%)
+  ⚠️ Insufficient data
+
+[32/89] GODS-USD @ $0.10834 (-3.21%)
+  Score: 85/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[33/89] LOKA-USD @ $0.114 (-3.14%)
+  Score: 65/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[34/89] RECALL-USD @ $0.2769 (-3.45%)
+  Score: 65/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[35/89] TROLL-USD @ $0.0871 (-3.36%)
+  Score: 75/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[36/89] CFG-USD @ $0.1961 (-3.21%)
+  Score: 60/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[37/89] TIME-USD @ $9.4 (-3.09%)
+  Score: 75/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[38/89] TROLL-USD @ $0.08659 (-3.07%)
+  Score: 75/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[39/89] MAMO-USD @ $0.05349 (-3.73%)
+  Score: 50/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[40/89] ALICE-USD @ $0.382 (-3.05%)
+  Score: 60/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[41/89] CFG-USD @ $0.198 (-3.41%)
+  Score: 60/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[42/89] PLU-USD @ $0.31 (-3.13%)
+  ⚠️ Insufficient data
+
+[43/89] GODS-USD @ $0.1119 (-3.10%)
+  Score: 90/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ -0.82% (Data ended)
+
+[44/89] PLU-USD @ $0.3 (-3.23%)
+  ⚠️ Insufficient data
+
+[45/89] ALICE-USD @ $0.403 (-3.36%)
+  Score: 60/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ -2.02% (Data ended)
+
+[46/89] NEON-USD @ $0.08334 (-3.14%)
+  Score: 50/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[47/89] LA-USD @ $0.3948 (-3.07%)
+  Score: 50/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[48/89] PIRATE-USD @ $0.0128 (-4.48%)
+  Score: 50/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[49/89] ZKC-USD @ $0.2625 (-3.24%)
+  Score: 50/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (Buy never filled)
+
+[50/89] ASM-USD @ $0.01365 (-3.26%)
+  Score: 50/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[51/89] GODS-USD @ $0.11905 (-3.99%)
+  Score: 95/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[52/89] SNX-USD @ $1.499 (-3.04%)
+  Score: 65/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[53/89] DASH-USD @ $43.31 (-3.13%)
+  Score: 75/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[54/89] SNX-USD @ $1.462 (-3.05%)
+  Score: 65/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[55/89] GODS-USD @ $0.11808 (-3.05%)
+  Score: 95/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[56/89] SPELL-USD @ $0.0003546 (-3.04%)
+  Score: 65/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[57/89] USELESS-USD @ $0.3243 (-3.11%)
+  Score: 50/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[58/89] ABT-USD @ $0.4924 (-3.36%)
+  Score: 30/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ❌ BLOCKED
+
+[59/89] ABT-USD @ $0.4695 (-4.05%)
+  Score: 30/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ❌ BLOCKED
+
+[60/89] GODS-USD @ $0.11623 (-3.14%)
+  Score: 95/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[61/89] GODS-USD @ $0.11258 (-4.54%)
+  Score: 95/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[62/89] BNKR-USD @ $0.0003805 (-3.21%)
+  Score: 55/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[63/89] SPELL-USD @ $0.0003517 (-3.67%)
+  Score: 65/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[64/89] PIRATE-USD @ $0.0126 (-3.08%)
+  Score: 55/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[65/89] ZKC-USD @ $0.2603 (-3.02%)
+  Score: 50/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[66/89] GODS-USD @ $0.11401 (-3.42%)
+  Score: 95/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[67/89] GODS-USD @ $0.11139 (-3.60%)
+  Score: 95/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[68/89] KSM-USD @ $10.48 (-5.42%)
+  Score: 50/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[69/89] GODS-USD @ $0.10842 (-3.10%)
+  Score: 95/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[70/89] ZKC-USD @ $0.2506 (-3.47%)
+  Score: 50/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[71/89] LRDS-USD @ $0.0898 (-4.16%)
+  Score: 40/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ❌ BLOCKED
+
+[72/89] ZORA-USD @ $0.10253 (-3.03%)
+  Score: 85/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[73/89] GODS-USD @ $0.10739 (-3.17%)
+  Score: 95/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[74/89] PIRATE-USD @ $0.0128 (-3.03%)
+  Score: 55/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[75/89] ZORA-USD @ $0.1017 (-3.00%)
+  Score: 85/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[76/89] VARA-USD @ $0.00196 (-3.45%)
+  Score: 30/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ❌ BLOCKED
+
+[77/89] PRCL-USD @ $0.047 (-3.29%)
+  Score: 65/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[78/89] TRAC-USD @ $0.6811 (-3.25%)
+  Score: 75/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[79/89] PNG-USD @ $0.08166 (-3.35%)
+  Score: 75/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[80/89] PNG-USD @ $0.0807 (-4.80%)
+  Score: 75/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[81/89] SEAM-USD @ $0.2424 (-3.27%)
+  Score: 40/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ❌ BLOCKED
+
+[82/89] ABT-USD @ $0.4669 (-3.79%)
+  Score: 30/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ❌ BLOCKED
+
+[83/89] LRDS-USD @ $0.0866 (-3.24%)
+  Score: 40/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ❌ BLOCKED
+
+[84/89] PNG-USD @ $0.08288 (-3.10%)
+  Score: 75/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[85/89] GODS-USD @ $0.11309 (-3.19%)
+  Score: 95/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[86/89] OMNI-USD @ $2.241 (-3.28%)
+  Score: 55/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[87/89] GTC-USD @ $0.21 (-4.55%)
+  ⚠️ Insufficient data
+
+[88/89] MOG-USD @ $4.3e-7 (-4.44%)
+  Score: 75/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+[89/89] MKR-USD @ $1419.3 (-5.38%)
+  Score: 65/100
+  BTC-Only: ❌ BLOCKED
+  Per-Crypto: ✅ 0.00% (No data)
+
+================================================================================
+BACKTEST RESULTS (With Real Price Data)
+================================================================================
+
+STRATEGY 1: BTC-Only
+────────────────────────────────────────────────────────────────────────────────
+Trades: 0
+Blocked: 81
+Wins: 0 (0%)
+Losses: 0
+Total P&L: 0.00%
+Avg P&L: 0%
+
+STRATEGY 2: Per-Crypto
+────────────────────────────────────────────────────────────────────────────────
+Trades: 70
+Blocked: 11
+Wins: 0 (0.0%)
+Losses: 70
+Total P&L: -41.85%
+Avg P&L: -0.60%
+
+COMPARISON
+────────────────────────────────────────────────────────────────────────────────
+P&L Difference: -41.85%
+
+🏆 WINNER: BTC-Only Market Conditions
+================================================================================

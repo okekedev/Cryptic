@@ -1,0 +1,536 @@
+[
+  {
+    "symbol": "ASM-USD",
+    "alert_price": 0.01429,
+    "dump_pct": -3.118644067796601,
+    "timestamp": "2025-10-17T14:25:16.474461"
+  },
+  {
+    "symbol": "ZKC-USD",
+    "alert_price": 0.2584,
+    "dump_pct": -3.0393996247654766,
+    "timestamp": "2025-10-17T14:31:53.872282"
+  },
+  {
+    "symbol": "GTC-USD",
+    "alert_price": 0.2,
+    "dump_pct": -4.761904761904753,
+    "timestamp": "2025-10-17T14:32:45.020044"
+  },
+  {
+    "symbol": "USELESS-USD",
+    "alert_price": 0.2808,
+    "dump_pct": -3.005181347150254,
+    "timestamp": "2025-10-17T14:35:48.513591"
+  },
+  {
+    "symbol": "TROLL-USD",
+    "alert_price": 0.0816,
+    "dump_pct": -3.773584905660371,
+    "timestamp": "2025-10-17T14:36:06.462781"
+  },
+  {
+    "symbol": "GODS-USD",
+    "alert_price": 0.10646,
+    "dump_pct": -3.5601050819820665,
+    "timestamp": "2025-10-17T14:36:19.804760"
+  },
+  {
+    "symbol": "TRAC-USD",
+    "alert_price": 0.6572,
+    "dump_pct": -4.43507343318307,
+    "timestamp": "2025-10-17T14:37:35.350029"
+  },
+  {
+    "symbol": "PLU-USD",
+    "alert_price": 0.31,
+    "dump_pct": -3.1250000000000027,
+    "timestamp": "2025-10-17T14:40:17.183806"
+  },
+  {
+    "symbol": "GODS-USD",
+    "alert_price": 0.10172,
+    "dump_pct": -5.182699478001488,
+    "timestamp": "2025-10-17T14:41:19.813203"
+  },
+  {
+    "symbol": "ASM-USD",
+    "alert_price": 0.01551,
+    "dump_pct": -3.0625000000000053,
+    "timestamp": "2025-10-17T14:41:54.106755"
+  },
+  {
+    "symbol": "OMNI-USD",
+    "alert_price": 2.11,
+    "dump_pct": -3.0776297657326674,
+    "timestamp": "2025-10-17T14:42:26.655885"
+  },
+  {
+    "symbol": "MAGIC-USD",
+    "alert_price": 0.15,
+    "dump_pct": -4.761904761904765,
+    "timestamp": "2025-10-17T14:43:21.156232"
+  },
+  {
+    "symbol": "GST-USD",
+    "alert_price": 0.003545,
+    "dump_pct": -3.0626196335794402,
+    "timestamp": "2025-10-17T14:43:26.183502"
+  },
+  {
+    "symbol": "PLU-USD",
+    "alert_price": 0.29,
+    "dump_pct": -9.375000000000009,
+    "timestamp": "2025-10-17T14:45:29.803722"
+  },
+  {
+    "symbol": "GODS-USD",
+    "alert_price": 0.10335,
+    "dump_pct": -3.40218712029162,
+    "timestamp": "2025-10-17T14:46:24.534675"
+  },
+  {
+    "symbol": "ASM-USD",
+    "alert_price": 0.01456,
+    "dump_pct": -6.964856230031953,
+    "timestamp": "2025-10-17T14:46:55.231351"
+  },
+  {
+    "symbol": "HONEY-USD",
+    "alert_price": 0.0106,
+    "dump_pct": -3.6363636363636305,
+    "timestamp": "2025-10-17T14:47:09.120240"
+  },
+  {
+    "symbol": "MAGIC-USD",
+    "alert_price": 0.1456,
+    "dump_pct": -4.399212081418243,
+    "timestamp": "2025-10-17T14:48:26.928224"
+  },
+  {
+    "symbol": "ASM-USD",
+    "alert_price": 0.01465,
+    "dump_pct": -3.044341495698215,
+    "timestamp": "2025-10-17T14:52:03.156443"
+  },
+  {
+    "symbol": "LRDS-USD",
+    "alert_price": 0.085,
+    "dump_pct": -4.0632054176072145,
+    "timestamp": "2025-10-17T14:55:21.340026"
+  },
+  {
+    "symbol": "MAMO-USD",
+    "alert_price": 0.05158,
+    "dump_pct": -3.0451127819548804,
+    "timestamp": "2025-10-17T14:56:25.989701"
+  },
+  {
+    "symbol": "PNG-USD",
+    "alert_price": 0.07811,
+    "dump_pct": -4.975669099756687,
+    "timestamp": "2025-10-17T14:57:04.263601"
+  },
+  {
+    "symbol": "ASM-USD",
+    "alert_price": 0.01492,
+    "dump_pct": -3.3052495139338953,
+    "timestamp": "2025-10-17T14:58:08.957655"
+  },
+  {
+    "symbol": "PLU-USD",
+    "alert_price": 0.29,
+    "dump_pct": -3.3333333333333366,
+    "timestamp": "2025-10-17T15:00:30.310612"
+  },
+  {
+    "symbol": "LOKA-USD",
+    "alert_price": 0.1166,
+    "dump_pct": -3.7159372419488057,
+    "timestamp": "2025-10-17T15:00:53.653661"
+  },
+  {
+    "symbol": "ASM-USD",
+    "alert_price": 0.01457,
+    "dump_pct": -4.3963254593175884,
+    "timestamp": "2025-10-17T15:03:10.310920"
+  },
+  {
+    "symbol": "PNG-USD",
+    "alert_price": 0.07801,
+    "dump_pct": -4.011320290390056,
+    "timestamp": "2025-10-17T15:05:05.632003"
+  },
+  {
+    "symbol": "ZKC-USD",
+    "alert_price": 0.2661,
+    "dump_pct": -3.09541150764749,
+    "timestamp": "2025-10-17T15:05:07.483099"
+  },
+  {
+    "symbol": "LOKA-USD",
+    "alert_price": 0.117,
+    "dump_pct": -3.1456953642384087,
+    "timestamp": "2025-10-17T15:16:13.430469"
+  },
+  {
+    "symbol": "ASM-USD",
+    "alert_price": 0.01411,
+    "dump_pct": -3.3561643835616497,
+    "timestamp": "2025-10-17T15:18:02.138817"
+  },
+  {
+    "symbol": "PLU-USD",
+    "alert_price": 0.29,
+    "dump_pct": -3.3333333333333366,
+    "timestamp": "2025-10-17T15:18:21.186828"
+  },
+  {
+    "symbol": "GODS-USD",
+    "alert_price": 0.10834,
+    "dump_pct": -3.2073617439471063,
+    "timestamp": "2025-10-17T15:20:11.560689"
+  },
+  {
+    "symbol": "LOKA-USD",
+    "alert_price": 0.114,
+    "dump_pct": -3.143585386576037,
+    "timestamp": "2025-10-17T15:21:29.914670"
+  },
+  {
+    "symbol": "RECALL-USD",
+    "alert_price": 0.2769,
+    "dump_pct": -3.4518828451882912,
+    "timestamp": "2025-10-17T15:23:14.770824"
+  },
+  {
+    "symbol": "TROLL-USD",
+    "alert_price": 0.0871,
+    "dump_pct": -3.361810717851997,
+    "timestamp": "2025-10-17T15:27:32.652797"
+  },
+  {
+    "symbol": "CFG-USD",
+    "alert_price": 0.1961,
+    "dump_pct": -3.208292201382036,
+    "timestamp": "2025-10-17T15:31:21.670051"
+  },
+  {
+    "symbol": "TIME-USD",
+    "alert_price": 9.4,
+    "dump_pct": -3.0927835051546286,
+    "timestamp": "2025-10-17T15:34:25.591261"
+  },
+  {
+    "symbol": "TROLL-USD",
+    "alert_price": 0.08659,
+    "dump_pct": -3.067278629799626,
+    "timestamp": "2025-10-17T15:36:47.353267"
+  },
+  {
+    "symbol": "MAMO-USD",
+    "alert_price": 0.05349,
+    "dump_pct": -3.7257019438444847,
+    "timestamp": "2025-10-17T15:44:54.868057"
+  },
+  {
+    "symbol": "ALICE-USD",
+    "alert_price": 0.382,
+    "dump_pct": -3.0456852791878197,
+    "timestamp": "2025-10-17T15:47:04.656864"
+  },
+  {
+    "symbol": "CFG-USD",
+    "alert_price": 0.198,
+    "dump_pct": -3.414634146341453,
+    "timestamp": "2025-10-17T15:49:05.079360"
+  },
+  {
+    "symbol": "PLU-USD",
+    "alert_price": 0.31,
+    "dump_pct": -3.1250000000000027,
+    "timestamp": "2025-10-17T15:55:13.651333"
+  },
+  {
+    "symbol": "GODS-USD",
+    "alert_price": 0.1119,
+    "dump_pct": -3.100103914097679,
+    "timestamp": "2025-10-17T16:00:18.925646"
+  },
+  {
+    "symbol": "PLU-USD",
+    "alert_price": 0.3,
+    "dump_pct": -3.2258064516129057,
+    "timestamp": "2025-10-17T16:00:31.034011"
+  },
+  {
+    "symbol": "ALICE-USD",
+    "alert_price": 0.403,
+    "dump_pct": -3.3573141486810445,
+    "timestamp": "2025-10-17T16:01:30.935322"
+  },
+  {
+    "symbol": "NEON-USD",
+    "alert_price": 0.08334,
+    "dump_pct": -3.13807531380754,
+    "timestamp": "2025-10-17T16:08:56.847275"
+  },
+  {
+    "symbol": "LA-USD",
+    "alert_price": 0.3948,
+    "dump_pct": -3.068990915786892,
+    "timestamp": "2025-10-17T16:11:16.802523"
+  },
+  {
+    "symbol": "PIRATE-USD",
+    "alert_price": 0.0128,
+    "dump_pct": -4.477611940298506,
+    "timestamp": "2025-10-17T16:13:39.629366"
+  },
+  {
+    "symbol": "ZKC-USD",
+    "alert_price": 0.2625,
+    "dump_pct": -3.243641725027636,
+    "timestamp": "2025-10-17T16:14:26.326138"
+  },
+  {
+    "symbol": "ASM-USD",
+    "alert_price": 0.01365,
+    "dump_pct": -3.260099220411046,
+    "timestamp": "2025-10-17T16:14:59.276488"
+  },
+  {
+    "symbol": "GODS-USD",
+    "alert_price": 0.11905,
+    "dump_pct": -3.991935483870965,
+    "timestamp": "2025-10-17T16:15:26.889440"
+  },
+  {
+    "symbol": "SNX-USD",
+    "alert_price": 1.499,
+    "dump_pct": -3.0401034928848594,
+    "timestamp": "2025-10-17T16:15:27.905955"
+  },
+  {
+    "symbol": "DASH-USD",
+    "alert_price": 43.31,
+    "dump_pct": -3.1312905390292967,
+    "timestamp": "2025-10-17T16:16:45.019975"
+  },
+  {
+    "symbol": "SNX-USD",
+    "alert_price": 1.462,
+    "dump_pct": -3.050397877984088,
+    "timestamp": "2025-10-17T16:20:59.070492"
+  },
+  {
+    "symbol": "GODS-USD",
+    "alert_price": 0.11808,
+    "dump_pct": -3.0541871921182273,
+    "timestamp": "2025-10-17T16:21:16.770181"
+  },
+  {
+    "symbol": "SPELL-USD",
+    "alert_price": 0.0003546,
+    "dump_pct": -3.035274815422477,
+    "timestamp": "2025-10-17T16:24:05.610108"
+  },
+  {
+    "symbol": "USELESS-USD",
+    "alert_price": 0.3243,
+    "dump_pct": -3.1072602330445234,
+    "timestamp": "2025-10-17T16:26:27.309101"
+  },
+  {
+    "symbol": "ABT-USD",
+    "alert_price": 0.4924,
+    "dump_pct": -3.3562315996074483,
+    "timestamp": "2025-10-17T16:27:04.871628"
+  },
+  {
+    "symbol": "ABT-USD",
+    "alert_price": 0.4695,
+    "dump_pct": -4.046597179644397,
+    "timestamp": "2025-10-17T16:37:54.876157"
+  },
+  {
+    "symbol": "GODS-USD",
+    "alert_price": 0.11623,
+    "dump_pct": -3.1416666666666635,
+    "timestamp": "2025-10-17T16:41:14.987772"
+  },
+  {
+    "symbol": "GODS-USD",
+    "alert_price": 0.11258,
+    "dump_pct": -4.53658950224709,
+    "timestamp": "2025-10-17T16:46:27.154992"
+  },
+  {
+    "symbol": "BNKR-USD",
+    "alert_price": 0.0003805,
+    "dump_pct": -3.205291274484873,
+    "timestamp": "2025-10-17T16:46:46.433609"
+  },
+  {
+    "symbol": "SPELL-USD",
+    "alert_price": 0.0003517,
+    "dump_pct": -3.670227334976719,
+    "timestamp": "2025-10-17T16:47:32.933819"
+  },
+  {
+    "symbol": "PIRATE-USD",
+    "alert_price": 0.0126,
+    "dump_pct": -3.0769230769230718,
+    "timestamp": "2025-10-17T16:50:44.640139"
+  },
+  {
+    "symbol": "ZKC-USD",
+    "alert_price": 0.2603,
+    "dump_pct": -3.017883755588693,
+    "timestamp": "2025-10-17T16:50:51.456022"
+  },
+  {
+    "symbol": "GODS-USD",
+    "alert_price": 0.11401,
+    "dump_pct": -3.4222786954680235,
+    "timestamp": "2025-10-17T16:57:07.804538"
+  },
+  {
+    "symbol": "GODS-USD",
+    "alert_price": 0.11139,
+    "dump_pct": -3.6001730852444807,
+    "timestamp": "2025-10-17T17:02:26.128893"
+  },
+  {
+    "symbol": "KSM-USD",
+    "alert_price": 10.48,
+    "dump_pct": -5.415162454873642,
+    "timestamp": "2025-10-17T17:06:06.387810"
+  },
+  {
+    "symbol": "GODS-USD",
+    "alert_price": 0.10842,
+    "dump_pct": -3.1012601662346957,
+    "timestamp": "2025-10-17T17:07:51.236945"
+  },
+  {
+    "symbol": "ZKC-USD",
+    "alert_price": 0.2506,
+    "dump_pct": -3.4668721109399105,
+    "timestamp": "2025-10-17T17:10:55.273607"
+  },
+  {
+    "symbol": "LRDS-USD",
+    "alert_price": 0.0898,
+    "dump_pct": -4.162219850586981,
+    "timestamp": "2025-10-17T17:11:18.360777"
+  },
+  {
+    "symbol": "ZORA-USD",
+    "alert_price": 0.10253,
+    "dump_pct": -3.026577130426566,
+    "timestamp": "2025-10-17T17:13:00.103831"
+  },
+  {
+    "symbol": "GODS-USD",
+    "alert_price": 0.10739,
+    "dump_pct": -3.173744477504279,
+    "timestamp": "2025-10-17T17:13:35.411124"
+  },
+  {
+    "symbol": "PIRATE-USD",
+    "alert_price": 0.0128,
+    "dump_pct": -3.0303030303030254,
+    "timestamp": "2025-10-17T17:38:23.755429"
+  },
+  {
+    "symbol": "ZORA-USD",
+    "alert_price": 0.1017,
+    "dump_pct": -3.004291845493562,
+    "timestamp": "2025-10-17T17:46:37.386409"
+  },
+  {
+    "symbol": "VARA-USD",
+    "alert_price": 0.00196,
+    "dump_pct": -3.4482758620689746,
+    "timestamp": "2025-10-17T17:46:40.498246"
+  },
+  {
+    "symbol": "PRCL-USD",
+    "alert_price": 0.047,
+    "dump_pct": -3.2921810699588425,
+    "timestamp": "2025-10-17T17:47:37.696722"
+  },
+  {
+    "symbol": "TRAC-USD",
+    "alert_price": 0.6811,
+    "dump_pct": -3.2528409090908985,
+    "timestamp": "2025-10-17T17:48:04.912723"
+  },
+  {
+    "symbol": "PNG-USD",
+    "alert_price": 0.08166,
+    "dump_pct": -3.349508817611551,
+    "timestamp": "2025-10-17T17:54:12.579244"
+  },
+  {
+    "symbol": "PNG-USD",
+    "alert_price": 0.0807,
+    "dump_pct": -4.801226849121156,
+    "timestamp": "2025-10-17T17:59:12.705169"
+  },
+  {
+    "symbol": "SEAM-USD",
+    "alert_price": 0.2424,
+    "dump_pct": -3.2721468475658364,
+    "timestamp": "2025-10-17T17:59:26.471042"
+  },
+  {
+    "symbol": "ABT-USD",
+    "alert_price": 0.4669,
+    "dump_pct": -3.791469194312802,
+    "timestamp": "2025-10-17T18:14:40.502827"
+  },
+  {
+    "symbol": "LRDS-USD",
+    "alert_price": 0.0866,
+    "dump_pct": -3.2402234636871508,
+    "timestamp": "2025-10-17T18:26:29.959775"
+  },
+  {
+    "symbol": "PNG-USD",
+    "alert_price": 0.08288,
+    "dump_pct": -3.0983280720215127,
+    "timestamp": "2025-10-17T18:28:16.479202"
+  },
+  {
+    "symbol": "GODS-USD",
+    "alert_price": 0.11309,
+    "dump_pct": -3.192946413285394,
+    "timestamp": "2025-10-17T18:28:50.025913"
+  },
+  {
+    "symbol": "OMNI-USD",
+    "alert_price": 2.241,
+    "dump_pct": -3.280103582218388,
+    "timestamp": "2025-10-17T18:32:22.617596"
+  },
+  {
+    "symbol": "GTC-USD",
+    "alert_price": 0.21,
+    "dump_pct": -4.545454545454549,
+    "timestamp": "2025-10-17T18:45:57.699807"
+  },
+  {
+    "symbol": "MOG-USD",
+    "alert_price": 4.3e-07,
+    "dump_pct": -4.4444444444444375,
+    "timestamp": "2025-10-17T18:49:21.924260"
+  },
+  {
+    "symbol": "MKR-USD",
+    "alert_price": 1419.3,
+    "dump_pct": -5.375584193929057,
+    "timestamp": "2025-10-17T19:04:51.737580"
+  }
+]
