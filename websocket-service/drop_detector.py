@@ -24,7 +24,7 @@ from typing import Dict, Optional
 
 # Configuration
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:5000")
-PRICE_DROP_THRESHOLD = float(os.getenv("PRICE_DROP_THRESHOLD", "4.0"))  # 4% drop
+PRICE_DROP_THRESHOLD = float(os.getenv("PRICE_DROP_THRESHOLD", "8.0"))  # 8% drop (proven via backtesting)
 PRICE_WINDOW_MINUTES = float(os.getenv("PRICE_WINDOW_MINUTES", "5"))  # 5-minute window
 DB_PATH = os.getenv("DROP_DB_PATH", "/app/data/drop_detector.db")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

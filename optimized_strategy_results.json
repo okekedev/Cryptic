@@ -1,0 +1,963 @@
+{
+  "feeStructure": {
+    "takerFee": 0.012,
+    "makerFee": 0.006,
+    "roundTripFee": 0.018000000000000002
+  },
+  "marketFilters": {
+    "minPrice": 0.01,
+    "minAvgVolumeUSD": 500,
+    "minVolatility": 0.005,
+    "maxSpreadPct": 0.15
+  },
+  "bestStrategy": {
+    "parameters": {
+      "dumpThreshold": -0.08,
+      "exitTarget": 0.1,
+      "maxHoldMinutes": 120
+    },
+    "metrics": {
+      "totalTrades": 49,
+      "winners": 48,
+      "losers": 1,
+      "winRate": 97.95918367346938,
+      "avgReturn": 7.791416999008612,
+      "totalNetReturn": 381.779432951422,
+      "filteredOutTickers": 373
+    }
+  },
+  "top15Strategies": [
+    {
+      "parameters": {
+        "dumpThreshold": -0.08,
+        "exitTarget": 0.1,
+        "maxHoldMinutes": 120
+      },
+      "metrics": {
+        "totalTrades": 49,
+        "winRate": 97.95918367346938,
+        "avgReturn": 7.791416999008612,
+        "totalNetReturn": 381.779432951422
+      }
+    },
+    {
+      "parameters": {
+        "dumpThreshold": -0.08,
+        "exitTarget": 0.1,
+        "maxHoldMinutes": 240
+      },
+      "metrics": {
+        "totalTrades": 49,
+        "winRate": 97.95918367346938,
+        "avgReturn": 7.763400495137965,
+        "totalNetReturn": 380.40662426176027
+      }
+    },
+    {
+      "parameters": {
+        "dumpThreshold": -0.1,
+        "exitTarget": 0.1,
+        "maxHoldMinutes": 120
+      },
+      "metrics": {
+        "totalTrades": 41,
+        "winRate": 100,
+        "avgReturn": 8.20000000000001,
+        "totalNetReturn": 336.2000000000004
+      }
+    },
+    {
+      "parameters": {
+        "dumpThreshold": -0.1,
+        "exitTarget": 0.1,
+        "maxHoldMinutes": 240
+      },
+      "metrics": {
+        "totalTrades": 41,
+        "winRate": 100,
+        "avgReturn": 8.20000000000001,
+        "totalNetReturn": 336.2000000000004
+      }
+    },
+    {
+      "parameters": {
+        "dumpThreshold": -0.08,
+        "exitTarget": 0.1,
+        "maxHoldMinutes": 60
+      },
+      "metrics": {
+        "totalTrades": 49,
+        "winRate": 95.91836734693877,
+        "avgReturn": 7.532439490567946,
+        "totalNetReturn": 369.08953503782936
+      }
+    },
+    {
+      "parameters": {
+        "dumpThreshold": -0.1,
+        "exitTarget": 0.1,
+        "maxHoldMinutes": 60
+      },
+      "metrics": {
+        "totalTrades": 41,
+        "winRate": 95.1219512195122,
+        "avgReturn": 7.712042701979335,
+        "totalNetReturn": 316.19375078115274
+      }
+    },
+    {
+      "parameters": {
+        "dumpThreshold": -0.08,
+        "exitTarget": 0.1,
+        "maxHoldMinutes": 30
+      },
+      "metrics": {
+        "totalTrades": 49,
+        "winRate": 91.83673469387756,
+        "avgReturn": 7.074628883897803,
+        "totalNetReturn": 346.65681531099233
+      }
+    },
+    {
+      "parameters": {
+        "dumpThreshold": -0.08,
+        "exitTarget": 0.08,
+        "maxHoldMinutes": 120
+      },
+      "metrics": {
+        "totalTrades": 49,
+        "winRate": 100,
+        "avgReturn": 6.200000000000004,
+        "totalNetReturn": 303.8000000000002
+      }
+    },
+    {
+      "parameters": {
+        "dumpThreshold": -0.08,
+        "exitTarget": 0.08,
+        "maxHoldMinutes": 240
+      },
+      "metrics": {
+        "totalTrades": 49,
+        "winRate": 100,
+        "avgReturn": 6.200000000000004,
+        "totalNetReturn": 303.8000000000002
+      }
+    },
+    {
+      "parameters": {
+        "dumpThreshold": -0.06,
+        "exitTarget": 0.1,
+        "maxHoldMinutes": 240
+      },
+      "metrics": {
+        "totalTrades": 75,
+        "winRate": 85.33333333333334,
+        "avgReturn": 5.747994096367264,
+        "totalNetReturn": 431.0995572275448
+      }
+    },
+    {
+      "parameters": {
+        "dumpThreshold": -0.1,
+        "exitTarget": 0.1,
+        "maxHoldMinutes": 30
+      },
+      "metrics": {
+        "totalTrades": 41,
+        "winRate": 90.2439024390244,
+        "avgReturn": 7.185670083490352,
+        "totalNetReturn": 294.61247342310446
+      }
+    },
+    {
+      "parameters": {
+        "dumpThreshold": -0.06,
+        "exitTarget": 0.08,
+        "maxHoldMinutes": 240
+      },
+      "metrics": {
+        "totalTrades": 75,
+        "winRate": 92,
+        "avgReturn": 5.043648653720579,
+        "totalNetReturn": 378.27364902904344
+      }
+    },
+    {
+      "parameters": {
+        "dumpThreshold": -0.06,
+        "exitTarget": 0.1,
+        "maxHoldMinutes": 60
+      },
+      "metrics": {
+        "totalTrades": 75,
+        "winRate": 84,
+        "avgReturn": 5.510848158291662,
+        "totalNetReturn": 413.3136118718746
+      }
+    },
+    {
+      "parameters": {
+        "dumpThreshold": -0.1,
+        "exitTarget": 0.08,
+        "maxHoldMinutes": 120
+      },
+      "metrics": {
+        "totalTrades": 41,
+        "winRate": 100,
+        "avgReturn": 6.200000000000006,
+        "totalNetReturn": 254.20000000000024
+      }
+    },
+    {
+      "parameters": {
+        "dumpThreshold": -0.1,
+        "exitTarget": 0.08,
+        "maxHoldMinutes": 240
+      },
+      "metrics": {
+        "totalTrades": 41,
+        "winRate": 100,
+        "avgReturn": 6.200000000000006,
+        "totalNetReturn": 254.20000000000024
+      }
+    }
+  ],
+  "allTrades": [
+    {
+      "ticker": "X:ALCX-USD",
+      "timestamp": 1760875560000000000,
+      "dumpPercent": -8.286038592508516,
+      "entryPrice": 8.08,
+      "exitPrice": 8.888000000000002,
+      "grossReturn": 10.00000000000002,
+      "netReturn": 8.20000000000002,
+      "holdMinutes": 0,
+      "exitReason": "target",
+      "volumeUSD": 32029.210080044406,
+      "spread": 12.376237623762377,
+      "avgPrice": 8.829346733668338,
+      "avgVolatility": 0.007686122054639028
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760662560000000000,
+      "dumpPercent": -99.77068345323741,
+      "entryPrice": 0.00255,
+      "exitPrice": 0.0028050000000000006,
+      "grossReturn": 10.000000000000018,
+      "netReturn": 8.200000000000017,
+      "holdMinutes": 3,
+      "exitReason": "target",
+      "volumeUSD": 604.92885,
+      "spread": 0,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760663220000000000,
+      "dumpPercent": -99.77068345323741,
+      "entryPrice": 0.00255,
+      "exitPrice": 0.0028050000000000006,
+      "grossReturn": 10.000000000000018,
+      "netReturn": 8.200000000000017,
+      "holdMinutes": 42,
+      "exitReason": "target",
+      "volumeUSD": 1496.0586799999999,
+      "spread": 0.7843137254901812,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760683140000000000,
+      "dumpPercent": -99.78281478927863,
+      "entryPrice": 0.00252,
+      "exitPrice": 0.002772,
+      "grossReturn": 10.000000000000002,
+      "netReturn": 8.200000000000001,
+      "holdMinutes": 14,
+      "exitReason": "target",
+      "volumeUSD": 11338.8143,
+      "spread": 1.984126984126972,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760696640000000000,
+      "dumpPercent": -99.78871978513877,
+      "entryPrice": 0.00236,
+      "exitPrice": 0.0025960000000000002,
+      "grossReturn": 10.000000000000004,
+      "netReturn": 8.200000000000003,
+      "holdMinutes": 28,
+      "exitReason": "target",
+      "volumeUSD": 128.86780000000002,
+      "spread": 0,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760699640000000000,
+      "dumpPercent": -99.78520499108734,
+      "entryPrice": 0.00241,
+      "exitPrice": 0.002651,
+      "grossReturn": 10.000000000000014,
+      "netReturn": 8.200000000000014,
+      "holdMinutes": 10,
+      "exitReason": "target",
+      "volumeUSD": 944.8107299999999,
+      "spread": 0.8298755186722014,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760700480000000000,
+      "dumpPercent": -99.78776637045985,
+      "entryPrice": 0.00246,
+      "exitPrice": 0.002706,
+      "grossReturn": 10.000000000000005,
+      "netReturn": 8.200000000000005,
+      "holdMinutes": 1,
+      "exitReason": "target",
+      "volumeUSD": 985.99506,
+      "spread": 0,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760702700000000000,
+      "dumpPercent": -99.7849272807404,
+      "entryPrice": 0.00244,
+      "exitPrice": 0.002684,
+      "grossReturn": 10.000000000000012,
+      "netReturn": 8.200000000000014,
+      "holdMinutes": 8,
+      "exitReason": "target",
+      "volumeUSD": 193.17236,
+      "spread": 0.40983606557377156,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760708700000000000,
+      "dumpPercent": -99.7898791805288,
+      "entryPrice": 0.0024,
+      "exitPrice": 0.00264,
+      "grossReturn": 10.000000000000009,
+      "netReturn": 8.200000000000008,
+      "holdMinutes": 4,
+      "exitReason": "target",
+      "volumeUSD": 120.27839999999999,
+      "spread": 0,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760710260000000000,
+      "dumpPercent": -99.78822088037104,
+      "entryPrice": 0.00242,
+      "exitPrice": 0.002662,
+      "grossReturn": 10.000000000000002,
+      "netReturn": 8.200000000000001,
+      "holdMinutes": 12,
+      "exitReason": "target",
+      "volumeUSD": 246.50361999999998,
+      "spread": 0,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760728800000000000,
+      "dumpPercent": -99.78443424811704,
+      "entryPrice": 0.00249,
+      "exitPrice": 0.002739,
+      "grossReturn": 10.000000000000004,
+      "netReturn": 8.200000000000003,
+      "holdMinutes": 21,
+      "exitReason": "target",
+      "volumeUSD": 20015.26769,
+      "spread": 1.6064257028112494,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760736960000000000,
+      "dumpPercent": -99.7766947275144,
+      "entryPrice": 0.00252,
+      "exitPrice": 0.002772,
+      "grossReturn": 10.000000000000002,
+      "netReturn": 8.200000000000001,
+      "holdMinutes": 105,
+      "exitReason": "target",
+      "volumeUSD": 247.31784000000002,
+      "spread": 0,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760755560000000000,
+      "dumpPercent": -99.78485370051635,
+      "entryPrice": 0.0025,
+      "exitPrice": 0.0027500000000000003,
+      "grossReturn": 10.000000000000009,
+      "netReturn": 8.200000000000008,
+      "holdMinutes": 1,
+      "exitReason": "target",
+      "volumeUSD": 366.705,
+      "spread": 0,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760778720000000000,
+      "dumpPercent": -99.78685461956522,
+      "entryPrice": 0.00251,
+      "exitPrice": 0.0027610000000000004,
+      "grossReturn": 10.000000000000014,
+      "netReturn": 8.200000000000014,
+      "holdMinutes": 1,
+      "exitReason": "target",
+      "volumeUSD": 647.40179,
+      "spread": 0,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760780160000000000,
+      "dumpPercent": -99.78544061302681,
+      "entryPrice": 0.00252,
+      "exitPrice": 0.002772,
+      "grossReturn": 10.000000000000002,
+      "netReturn": 8.200000000000001,
+      "holdMinutes": 1,
+      "exitReason": "target",
+      "volumeUSD": 601.8768,
+      "spread": 0,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760781000000000000,
+      "dumpPercent": -99.78712534059946,
+      "entryPrice": 0.0025,
+      "exitPrice": 0.0027500000000000003,
+      "grossReturn": 10.000000000000009,
+      "netReturn": 8.200000000000008,
+      "holdMinutes": 1,
+      "exitReason": "target",
+      "volumeUSD": 1477.905,
+      "spread": 0,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760781120000000000,
+      "dumpPercent": -99.78797683923705,
+      "entryPrice": 0.00249,
+      "exitPrice": 0.002739,
+      "grossReturn": 10.000000000000004,
+      "netReturn": 8.200000000000003,
+      "holdMinutes": 1,
+      "exitReason": "target",
+      "volumeUSD": 809.19771,
+      "spread": 0.40160642570281235,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760781360000000000,
+      "dumpPercent": -99.78687127024723,
+      "entryPrice": 0.0025,
+      "exitPrice": 0.0027500000000000003,
+      "grossReturn": 10.000000000000009,
+      "netReturn": 8.200000000000008,
+      "holdMinutes": 1,
+      "exitReason": "target",
+      "volumeUSD": 124.51608,
+      "spread": 0.400000000000001,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760781840000000000,
+      "dumpPercent": -99.7869439236407,
+      "entryPrice": 0.0025,
+      "exitPrice": 0.0027500000000000003,
+      "grossReturn": 10.000000000000009,
+      "netReturn": 8.200000000000008,
+      "holdMinutes": 15,
+      "exitReason": "target",
+      "volumeUSD": 619.22704,
+      "spread": 0.400000000000001,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760784360000000000,
+      "dumpPercent": -99.78984532616005,
+      "entryPrice": 0.0025,
+      "exitPrice": 0.0027500000000000003,
+      "grossReturn": 10.000000000000009,
+      "netReturn": 8.200000000000008,
+      "holdMinutes": 1,
+      "exitReason": "target",
+      "volumeUSD": 1966.9725,
+      "spread": 0,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760784480000000000,
+      "dumpPercent": -99.78998655913979,
+      "entryPrice": 0.0025,
+      "exitPrice": 0.0027500000000000003,
+      "grossReturn": 10.000000000000009,
+      "netReturn": 8.200000000000008,
+      "holdMinutes": 3,
+      "exitReason": "target",
+      "volumeUSD": 1214.195,
+      "spread": 0,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760785920000000000,
+      "dumpPercent": -99.7889761120959,
+      "entryPrice": 0.0025,
+      "exitPrice": 0.0027500000000000003,
+      "grossReturn": 10.000000000000009,
+      "netReturn": 8.200000000000008,
+      "holdMinutes": 7,
+      "exitReason": "target",
+      "volumeUSD": 461.5,
+      "spread": 0,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760792580000000000,
+      "dumpPercent": -99.78939355493529,
+      "entryPrice": 0.00249,
+      "exitPrice": 0.002739,
+      "grossReturn": 10.000000000000004,
+      "netReturn": 8.200000000000003,
+      "holdMinutes": 38,
+      "exitReason": "target",
+      "volumeUSD": 660.16872,
+      "spread": 0,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760795940000000000,
+      "dumpPercent": -99.78947368421053,
+      "entryPrice": 0.00248,
+      "exitPrice": 0.0027280000000000004,
+      "grossReturn": 10.000000000000016,
+      "netReturn": 8.200000000000015,
+      "holdMinutes": 16,
+      "exitReason": "target",
+      "volumeUSD": 333.44592,
+      "spread": 0,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760819580000000000,
+      "dumpPercent": -99.78410539736507,
+      "entryPrice": 0.00254,
+      "exitPrice": 0.0027940000000000005,
+      "grossReturn": 10.000000000000012,
+      "netReturn": 8.200000000000012,
+      "holdMinutes": 103,
+      "exitReason": "target",
+      "volumeUSD": 602.5489600000001,
+      "spread": 0,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760860920000000000,
+      "dumpPercent": -99.78750209978163,
+      "entryPrice": 0.00253,
+      "exitPrice": 0.0027830000000000003,
+      "grossReturn": 10.000000000000007,
+      "netReturn": 8.200000000000006,
+      "holdMinutes": 1,
+      "exitReason": "target",
+      "volumeUSD": 702.8087,
+      "spread": 0,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760862600000000000,
+      "dumpPercent": -99.78421544473707,
+      "entryPrice": 0.00254,
+      "exitPrice": 0.0027940000000000005,
+      "grossReturn": 10.000000000000012,
+      "netReturn": 8.200000000000012,
+      "holdMinutes": 27,
+      "exitReason": "target",
+      "volumeUSD": 322.41490000000005,
+      "spread": 0,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760881200000000000,
+      "dumpPercent": -99.7886679424245,
+      "entryPrice": 0.00254,
+      "exitPrice": 0.0027940000000000005,
+      "grossReturn": 10.000000000000012,
+      "netReturn": 8.200000000000012,
+      "holdMinutes": 6,
+      "exitReason": "target",
+      "volumeUSD": 3096.14316,
+      "spread": 0,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AMP-USD",
+      "timestamp": 1760905080000000000,
+      "dumpPercent": -99.79263613356193,
+      "entryPrice": 0.00254,
+      "exitPrice": 0.0027940000000000005,
+      "grossReturn": 10.000000000000012,
+      "netReturn": 8.200000000000012,
+      "holdMinutes": 2,
+      "exitReason": "target",
+      "volumeUSD": 805.4517800000001,
+      "spread": 0.3937007874015758,
+      "avgPrice": 0.0723799112149544,
+      "avgVolatility": 15.864476960437187
+    },
+    {
+      "ticker": "X:AVT-USD",
+      "timestamp": 1760908260000000000,
+      "dumpPercent": -9.999999999999993,
+      "entryPrice": 1.35,
+      "exitPrice": 1.4850000000000003,
+      "grossReturn": 10.000000000000016,
+      "netReturn": 8.200000000000015,
+      "holdMinutes": 0,
+      "exitReason": "target",
+      "volumeUSD": 8781.696000000002,
+      "spread": 11.111111111111104,
+      "avgPrice": 1.3029999999999993,
+      "avgVolatility": 0.007298680770108924
+    },
+    {
+      "ticker": "X:BADGER-USD",
+      "timestamp": 1760844420000000000,
+      "dumpPercent": -9.21348314606741,
+      "entryPrice": 0.808,
+      "exitPrice": 0.8888000000000001,
+      "grossReturn": 10.000000000000012,
+      "netReturn": 8.200000000000012,
+      "holdMinutes": 0,
+      "exitReason": "target",
+      "volumeUSD": 1170.86201371953,
+      "spread": 10.272277227722768,
+      "avgPrice": 0.8196477093206919,
+      "avgVolatility": 0.0075154080829653155
+    },
+    {
+      "ticker": "X:BADGER-USD",
+      "timestamp": 1760844780000000000,
+      "dumpPercent": -10.101010101010099,
+      "entryPrice": 0.801,
+      "exitPrice": 0.8811000000000001,
+      "grossReturn": 10.000000000000007,
+      "netReturn": 8.200000000000006,
+      "holdMinutes": 0,
+      "exitReason": "target",
+      "volumeUSD": 179.14875310692,
+      "spread": 11.23595505617977,
+      "avgPrice": 0.8196477093206919,
+      "avgVolatility": 0.0075154080829653155
+    },
+    {
+      "ticker": "X:BADGER-USD",
+      "timestamp": 1760844900000000000,
+      "dumpPercent": -10.325476992143654,
+      "entryPrice": 0.799,
+      "exitPrice": 0.8789000000000001,
+      "grossReturn": 10.00000000000001,
+      "netReturn": 8.20000000000001,
+      "holdMinutes": 0,
+      "exitReason": "target",
+      "volumeUSD": 3306.2827841666012,
+      "spread": 11.514392991239045,
+      "avgPrice": 0.8196477093206919,
+      "avgVolatility": 0.0075154080829653155
+    },
+    {
+      "ticker": "X:CTX-USD",
+      "timestamp": 1760908080000000000,
+      "dumpPercent": -9.889865391033483,
+      "entryPrice": 1.62,
+      "exitPrice": 1.7820000000000003,
+      "grossReturn": 10.000000000000009,
+      "netReturn": 8.200000000000008,
+      "holdMinutes": 3,
+      "exitReason": "target",
+      "volumeUSD": 17067.2534028,
+      "spread": 9.567901234567888,
+      "avgPrice": 1.1636349698535746,
+      "avgVolatility": 0.005196730982421163
+    },
+    {
+      "ticker": "X:CTX-USD",
+      "timestamp": 1760911080000000000,
+      "dumpPercent": -12.943871706758303,
+      "entryPrice": 1.52,
+      "exitPrice": 1.6720000000000002,
+      "grossReturn": 10.000000000000009,
+      "netReturn": 8.200000000000008,
+      "holdMinutes": 0,
+      "exitReason": "target",
+      "volumeUSD": 220772.29756199996,
+      "spread": 14.203947368421051,
+      "avgPrice": 1.1636349698535746,
+      "avgVolatility": 0.005196730982421163
+    },
+    {
+      "ticker": "X:INDEX-USD",
+      "timestamp": 1760904480000000000,
+      "dumpPercent": -10.843373493975902,
+      "entryPrice": 0.74,
+      "exitPrice": 0.8140000000000001,
+      "grossReturn": 10.000000000000009,
+      "netReturn": 8.200000000000008,
+      "holdMinutes": 0,
+      "exitReason": "target",
+      "volumeUSD": 15934.13936999999,
+      "spread": 10.810810810810805,
+      "avgPrice": 0.7994675540765388,
+      "avgVolatility": 0.007022532535485214
+    },
+    {
+      "ticker": "X:MLN-USD",
+      "timestamp": 1760875500000000000,
+      "dumpPercent": -10.49180327868852,
+      "entryPrice": 10.92,
+      "exitPrice": 12.012,
+      "grossReturn": 10.000000000000005,
+      "netReturn": 8.200000000000005,
+      "holdMinutes": 0,
+      "exitReason": "target",
+      "volumeUSD": 186558.7899674918,
+      "spread": 11.630036630036626,
+      "avgPrice": 8.668036283891535,
+      "avgVolatility": 0.009312167838526902
+    },
+    {
+      "ticker": "X:MLN-USD",
+      "timestamp": 1760914380000000000,
+      "dumpPercent": -10.45836023240801,
+      "entryPrice": 13.87,
+      "exitPrice": 15.257,
+      "grossReturn": 10.000000000000004,
+      "netReturn": 8.200000000000003,
+      "holdMinutes": 0,
+      "exitReason": "target",
+      "volumeUSD": 453098.73747325904,
+      "spread": 12.509012256669081,
+      "avgPrice": 8.668036283891535,
+      "avgVolatility": 0.009312167838526902
+    },
+    {
+      "ticker": "X:OCEAN-USD",
+      "timestamp": 1760895900000000000,
+      "dumpPercent": -10.675091453275694,
+      "entryPrice": 0.2686,
+      "exitPrice": 0.29546000000000006,
+      "grossReturn": 10.000000000000018,
+      "netReturn": 8.200000000000019,
+      "holdMinutes": 0,
+      "exitReason": "target",
+      "volumeUSD": 33130.656116172155,
+      "spread": 11.913626209977652,
+      "avgPrice": 0.24000077951002216,
+      "avgVolatility": 0.006045359328216042
+    },
+    {
+      "ticker": "X:PIRATE-USD",
+      "timestamp": 1760686200000000000,
+      "dumpPercent": -8.91719745222929,
+      "entryPrice": 0.0143,
+      "exitPrice": 0.01573,
+      "grossReturn": 10.000000000000005,
+      "netReturn": 8.200000000000005,
+      "holdMinutes": 4,
+      "exitReason": "target",
+      "volumeUSD": 11967.113519999999,
+      "spread": 9.090909090909085,
+      "avgPrice": 0.014064105011932972,
+      "avgVolatility": 0.008032701360791138
+    },
+    {
+      "ticker": "X:PIRATE-USD",
+      "timestamp": 1760688900000000000,
+      "dumpPercent": -10.000000000000005,
+      "entryPrice": 0.0144,
+      "exitPrice": 0.01584,
+      "grossReturn": 10.000000000000002,
+      "netReturn": 8.200000000000001,
+      "holdMinutes": 0,
+      "exitReason": "target",
+      "volumeUSD": 21888.971280000005,
+      "spread": 12.499999999999996,
+      "avgPrice": 0.014064105011932972,
+      "avgVolatility": 0.008032701360791138
+    },
+    {
+      "ticker": "X:PNG-USD",
+      "timestamp": 1760700120000000000,
+      "dumpPercent": -9.395509499136443,
+      "entryPrice": 0.07869,
+      "exitPrice": 0.08178,
+      "grossReturn": 3.9268013724742783,
+      "netReturn": 2.126801372474278,
+      "holdMinutes": 120,
+      "exitReason": "timeout",
+      "volumeUSD": 975.6135400000001,
+      "spread": 8.323802262040921,
+      "avgPrice": 0.08201788235294115,
+      "avgVolatility": 0.00577585608326448
+    },
+    {
+      "ticker": "X:TRU-USD",
+      "timestamp": 1760879460000000000,
+      "dumpPercent": -9.842519685039365,
+      "entryPrice": 0.0229,
+      "exitPrice": 0.02519,
+      "grossReturn": 10.000000000000002,
+      "netReturn": 8.200000000000001,
+      "holdMinutes": 0,
+      "exitReason": "target",
+      "volumeUSD": 115761.94738773044,
+      "spread": 12.227074235807862,
+      "avgPrice": 0.02028608355091376,
+      "avgVolatility": 0.006124376815224182
+    },
+    {
+      "ticker": "X:TRU-USD",
+      "timestamp": 1760879520000000000,
+      "dumpPercent": -8.433734939759027,
+      "entryPrice": 0.0228,
+      "exitPrice": 0.0219,
+      "grossReturn": -3.947368421052638,
+      "netReturn": -5.747368421052639,
+      "holdMinutes": 120,
+      "exitReason": "timeout",
+      "volumeUSD": 77286.56299418875,
+      "spread": 9.210526315789464,
+      "avgPrice": 0.02028608355091376,
+      "avgVolatility": 0.006124376815224182
+    },
+    {
+      "ticker": "X:UST-USD",
+      "timestamp": 1760684280000000000,
+      "dumpPercent": -99.2535675082327,
+      "entryPrice": 0.00748,
+      "exitPrice": 0.008228000000000001,
+      "grossReturn": 10.000000000000018,
+      "netReturn": 8.200000000000017,
+      "holdMinutes": 1,
+      "exitReason": "target",
+      "volumeUSD": 430.27734975332356,
+      "spread": 0.4010695187165844,
+      "avgPrice": 0.9921383724832193,
+      "avgVolatility": 3.575029800234
+    },
+    {
+      "ticker": "X:UST-USD",
+      "timestamp": 1760728680000000000,
+      "dumpPercent": -99.2274678111588,
+      "entryPrice": 0.00774,
+      "exitPrice": 0.008514,
+      "grossReturn": 10.000000000000005,
+      "netReturn": 8.200000000000005,
+      "holdMinutes": 1,
+      "exitReason": "target",
+      "volumeUSD": 104.310550422,
+      "spread": 0,
+      "avgPrice": 0.9921383724832193,
+      "avgVolatility": 3.575029800234
+    },
+    {
+      "ticker": "X:UST-USD",
+      "timestamp": 1760792700000000000,
+      "dumpPercent": -99.19153608144525,
+      "entryPrice": 0.0081,
+      "exitPrice": 0.00891,
+      "grossReturn": 10,
+      "netReturn": 8.200000000000001,
+      "holdMinutes": 1,
+      "exitReason": "target",
+      "volumeUSD": 583.8950194906553,
+      "spread": 0.12345679012345176,
+      "avgPrice": 0.9921383724832193,
+      "avgVolatility": 3.575029800234
+    },
+    {
+      "ticker": "X:UST-USD",
+      "timestamp": 1760814720000000000,
+      "dumpPercent": -99.18163672654691,
+      "entryPrice": 0.0082,
+      "exitPrice": 0.009020000000000002,
+      "grossReturn": 10.000000000000014,
+      "netReturn": 8.200000000000014,
+      "holdMinutes": 1,
+      "exitReason": "target",
+      "volumeUSD": 96.58442619109802,
+      "spread": 0,
+      "avgPrice": 0.9921383724832193,
+      "avgVolatility": 3.575029800234
+    },
+    {
+      "ticker": "X:UST-USD",
+      "timestamp": 1760827740000000000,
+      "dumpPercent": -99.14861762650963,
+      "entryPrice": 0.00853,
+      "exitPrice": 0.009383,
+      "grossReturn": 10.000000000000016,
+      "netReturn": 8.200000000000015,
+      "holdMinutes": 1,
+      "exitReason": "target",
+      "volumeUSD": 154.9781228564,
+      "spread": 0,
+      "avgPrice": 0.9921383724832193,
+      "avgVolatility": 3.575029800234
+    }
+  ]
+}
