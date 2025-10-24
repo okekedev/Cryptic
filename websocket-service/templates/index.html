@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cryptic - Trading Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0e27;
+            color: #fff;
+            overflow-x: hidden;
+            position: relative;
+            min-height: 100vh;
+        }
+
+        /* Animated Background */
+        .animated-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            overflow: hidden;
+        }
+
+        .particle {
+            position: absolute;
+            background: rgba(100, 200, 255, 0.6);
+            border-radius: 50%;
+            animation: float linear infinite;
+        }
+
+        @keyframes float {
+            0% {
+                transform: translateY(100vh) scale(0);
+                opacity: 0;
+            }
+            10% {
+                opacity: 1;
+            }
+            90% {
+                opacity: 1;
+            }
+            100% {
+                transform: translateY(-100vh) scale(1);
+                opacity: 0;
+            }
+        }
+
+        /* Content Container */
+        .container {
+            position: relative;
+            z-index: 1;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        /* Header */
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        .header h1 {
+            font-size: 3em;
+            background: linear-gradient(45deg, #667eea, #764ba2, #f093fb);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+
+        .header .subtitle {
+            font-size: 1.2em;
+            color: #a0aec0;
+        }
+
+        /* Stats Cards */
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .stat-card .label {
+            font-size: 0.9em;
+            color: #a0aec0;
+            margin-bottom: 10px;
+        }
+
+        .stat-card .value {
+            font-size: 2em;
+            font-weight: bold;
+        }
+
+        .stat-card .value.positive {
+            color: #48bb78;
+        }
+
+        .stat-card .value.negative {
+            color: #f56565;
+        }
+
+        /* Controls */
+        .controls {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 40px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            display: flex;
+            gap: 30px;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .toggle-group {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .toggle-label {
+            font-size: 1.1em;
+            color: #e2e8f0;
+        }
+
+        /* Toggle Switch */
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 60px;
+            height: 34px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #4a5568;
+            transition: 0.4s;
+            border-radius: 34px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 26px;
+            width: 26px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: 0.4s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: #48bb78;
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
+
+        /* Trade History */
+        .trade-history {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        .trade-history h2 {
+            margin-bottom: 20px;
+            font-size: 1.8em;
+        }
+
+        .trade-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .trade-table th {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 2px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .trade-table td {
+            padding: 15px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .trade-table tr:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .profit {
+            color: #48bb78;
+            font-weight: bold;
+        }
+
+        .loss {
+            color: #f56565;
+            font-weight: bold;
+        }
+
+        /* Pagination */
+        .pagination {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .pagination button {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #fff;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .pagination button:hover:not(:disabled) {
+            background: rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .pagination .current {
+            background: #667eea;
+            border-color: #667eea;
+        }
+
+        /* Loading State */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            font-size: 1.2em;
+            color: #a0aec0;
+        }
+
+        /* No Data */
+        .no-data {
+            text-align: center;
+            padding: 40px;
+            font-size: 1.2em;
+            color: #a0aec0;
+        }
+    </style>
+</head>
+<body>
+    <!-- Animated Background -->
+    <div class="animated-bg" id="bg"></div>
+
+    <!-- Content -->
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>CRYPTIC</h1>
+            <p class="subtitle">Vol AND Support Strategy - Trading Dashboard</p>
+        </div>
+
+        <!-- Stats -->
+        <div class="stats">
+            <div class="stat-card">
+                <div class="label">Total P&L</div>
+                <div class="value" id="total-pnl">$0.00</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Win Rate</div>
+                <div class="value" id="win-rate">0%</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Total Trades</div>
+                <div class="value" id="total-trades">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Open Positions</div>
+                <div class="value" id="open-positions">0</div>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="controls">
+            <div class="toggle-group">
+                <span class="toggle-label">Auto Trading</span>
+                <label class="switch">
+                    <input type="checkbox" id="auto-trade-toggle" checked>
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div class="toggle-group">
+                <span class="toggle-label">Daily Email Reports</span>
+                <label class="switch">
+                    <input type="checkbox" id="email-toggle" checked>
+                    <span class="slider"></span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Trade History -->
+        <div class="trade-history">
+            <h2>Trade History</h2>
+            <div id="trade-content">
+                <div class="loading">Loading trade history...</div>
+            </div>
+            <div class="pagination" id="pagination"></div>
+        </div>
+    </div>
+
+    <script>
+        // Animated background particles
+        function createParticles() {
+            const bg = document.getElementById('bg');
+            const particleCount = 50;
+
+            for (let i = 0; i < particleCount; i++) {
+                const particle = document.createElement('div');
+                particle.className = 'particle';
+
+                const size = Math.random() * 4 + 2;
+                particle.style.width = size + 'px';
+                particle.style.height = size + 'px';
+                particle.style.left = Math.random() * 100 + '%';
+                particle.style.animationDuration = (Math.random() * 10 + 10) + 's';
+                particle.style.animationDelay = Math.random() * 5 + 's';
+
+                bg.appendChild(particle);
+            }
+        }
+
+        createParticles();
+
+        // Data management
+        let currentPage = 1;
+        const tradesPerPage = 10;
+        let allTrades = [];
+
+        // Fetch and update data
+        async function fetchData() {
+            try {
+                // Fetch stats
+                const statsResponse = await fetch('/stats');
+                const stats = await statsResponse.json();
+
+                updateStats(stats);
+                updateTrades(stats.closed_trades || []);
+
+                // Update open positions count
+                const positionsResponse = await fetch('/positions');
+                const positions = await positionsResponse.json();
+                document.getElementById('open-positions').textContent = positions.count || 0;
+
+            } catch (error) {
+                console.error('Error fetching data:', error);
+            }
+        }
+
+        function updateStats(stats) {
+            const totalPnl = stats.total_pnl || 0;
+            const pnlElement = document.getElementById('total-pnl');
+            pnlElement.textContent = `$${totalPnl.toFixed(2)}`;
+            pnlElement.className = 'value ' + (totalPnl >= 0 ? 'positive' : 'negative');
+
+            const winRate = stats.win_rate || 0;
+            document.getElementById('win-rate').textContent = `${winRate.toFixed(1)}%`;
+
+            document.getElementById('total-trades').textContent = stats.total_trades || 0;
+        }
+
+        function updateTrades(trades) {
+            allTrades = trades.slice(0, 1000).reverse(); // Most recent first, max 1000
+            renderTrades();
+        }
+
+        function renderTrades() {
+            const content = document.getElementById('trade-content');
+
+            if (allTrades.length === 0) {
+                content.innerHTML = '<div class="no-data">No trades yet. Waiting for entry signals...</div>';
+                document.getElementById('pagination').innerHTML = '';
+                return;
+            }
+
+            const startIdx = (currentPage - 1) * tradesPerPage;
+            const endIdx = startIdx + tradesPerPage;
+            const pageTrades = allTrades.slice(startIdx, endIdx);
+
+            let html = `
+                <table class="trade-table">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Entry Price</th>
+                            <th>Exit Price</th>
+                            <th>P&L %</th>
+                            <th>P&L $</th>
+                            <th>Exit Time</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            pageTrades.forEach(trade => {
+                const pnlPercent = ((trade.exit_price - trade.entry_price) / trade.entry_price * 100);
+                const pnlClass = trade.pnl >= 0 ? 'profit' : 'loss';
+
+                html += `
+                    <tr>
+                        <td>${trade.ticker}</td>
+                        <td>$${trade.entry_price.toFixed(4)}</td>
+                        <td>$${trade.exit_price.toFixed(4)}</td>
+                        <td class="${pnlClass}">${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%</td>
+                        <td class="${pnlClass}">$${trade.pnl.toFixed(2)}</td>
+                        <td>${new Date(trade.exit_time).toLocaleString()}</td>
+                    </tr>
+                `;
+            });
+
+            html += '</tbody></table>';
+            content.innerHTML = html;
+
+            renderPagination();
+        }
+
+        function renderPagination() {
+            const totalPages = Math.ceil(allTrades.length / tradesPerPage);
+            const pagination = document.getElementById('pagination');
+
+            if (totalPages <= 1) {
+                pagination.innerHTML = '';
+                return;
+            }
+
+            let html = `
+                <button onclick="changePage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>Previous</button>
+                <button class="current">${currentPage} / ${totalPages}</button>
+                <button onclick="changePage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>Next</button>
+            `;
+
+            pagination.innerHTML = html;
+        }
+
+        function changePage(page) {
+            const totalPages = Math.ceil(allTrades.length / tradesPerPage);
+            if (page < 1 || page > totalPages) return;
+
+            currentPage = page;
+            renderTrades();
+        }
+
+        // Toggle handlers
+        document.getElementById('auto-trade-toggle').addEventListener('change', async (e) => {
+            try {
+                await fetch('/toggle-trading', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: e.target.checked })
+                });
+            } catch (error) {
+                console.error('Error toggling trading:', error);
+            }
+        });
+
+        document.getElementById('email-toggle').addEventListener('change', async (e) => {
+            try {
+                await fetch('/toggle-email', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: e.target.checked })
+                });
+            } catch (error) {
+                console.error('Error toggling email:', error);
+            }
+        });
+
+        // Initial load and auto-refresh
+        fetchData();
+        setInterval(fetchData, 10000); // Refresh every 10 seconds
+    </script>
+</body>
+</html>

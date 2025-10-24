@@ -14,10 +14,14 @@ import os
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 import uvicorn
 from dotenv import load_dotenv
+from pydantic import BaseModel
 
 # Import bot modules
 from polygon import PolygonRestClient
@@ -188,13 +192,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Templates for frontend
+templates = Jinja2Templates(directory="templates")
 
-@app.get("/")
-async def root():
-    """Health check"""
+# Pydantic models for request bodies
+class ToggleRequest(BaseModel):
+    enabled: bool
+
+
+@app.get("/", response_class=HTMLResponse)
+async def root(request: Request):
+    """Serve frontend dashboard"""
+    return templates.TemplateResponse("index.html", {"request": request})
+
+
+@app.get("/api")
+async def api_root():
+    """API health check"""
     return {
         "status": "running",
-        "strategy": "Proven Dump Trading (88.71% win rate)",
+        "strategy": "Vol AND Support (93.3% target win rate)",
         "data_source": "Polygon.io 1-min candles",
         "pairs_monitored": len(crypto_pairs)
     }
@@ -228,6 +245,25 @@ async def get_positions():
             "max": 20
         }
     return {"error": "Trader not initialized"}
+
+
+@app.post("/toggle-trading")
+async def toggle_trading(request: ToggleRequest):
+    """Toggle auto-trading on/off"""
+    if proven_trader:
+        proven_trader.auto_trade = request.enabled
+        logger.info(f"🔄 Auto-trading {'enabled' if request.enabled else 'disabled'}")
+        return {"status": "success", "auto_trade": request.enabled}
+    return {"error": "Trader not initialized"}
+
+
+@app.post("/toggle-email")
+async def toggle_email(request: ToggleRequest):
+    """Toggle daily email reports on/off"""
+    # Store email toggle state in environment or config
+    os.environ['EMAIL_REPORTS_ENABLED'] = 'true' if request.enabled else 'false'
+    logger.info(f"📧 Email reports {'enabled' if request.enabled else 'disabled'}")
+    return {"status": "success", "email_enabled": request.enabled}
 
 
 if __name__ == "__main__":
