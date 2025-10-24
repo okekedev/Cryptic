@@ -1,72 +1,38 @@
+version: '3.8'
+
 services:
-  # UNIFIED SERVICE - All bots in one container!
   trading-bot:
-    build: ./websocket-service
-    container_name: trading-bot-unified
+    build:
+      context: ./websocket-service
+      dockerfile: Dockerfile
+    container_name: trading-bot
+    restart: unless-stopped
     ports:
-      - "5001:5000"   # FastAPI REST API + WebSocket streaming (external 5001 -> internal 5000)
-      - "8082:8080"   # Telegram webhook server (external 8082 -> internal 8080)
-      - "8083:8081"   # Direct Socket.IO for spike alerts (external 8083 -> internal 8081)
-    volumes:
-      - ./data:/app/data  # Shared databases
-    env_file:
-      - .env
+      - "8000:8000"
     environment:
-      # WebSocket & Coinbase streaming
-      WS_URL: wss://advanced-trade-ws.coinbase.com
-      USE_ALL_USD_PAIRS: "true"
-      VOLUME_THRESHOLD: ${VOLUME_THRESHOLD:-1.5}
-      WINDOW_MINUTES: ${WINDOW_MINUTES:-5}
-
-      # Telegram Bot
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
-      ALERTS_CHANNEL_ID: ${ALERTS_CHANNEL_ID:-}
-      WEBHOOK_PORT: "8080"
-      SPIKE_SOCKET_PORT: "8081"
-
-      # Coinbase Trading API
+      # API Credentials
       COINBASE_API_KEY: ${COINBASE_API_KEY}
       COINBASE_SIGNING_KEY: ${COINBASE_SIGNING_KEY}
+      POLYGON_API_KEY: ${POLYGON_API_KEY}
 
-      # Drop Detector Settings
-      PRICE_DROP_THRESHOLD: ${PRICE_DROP_THRESHOLD:-4.0}
-      PRICE_WINDOW_MINUTES: ${PRICE_WINDOW_MINUTES:-5}
-      DROP_DB_PATH: /app/data/drop_detector.db
+      # Trading Configuration (Vol AND Support 120 Candles strategy)
+      PROVEN_AUTO_TRADE: "yes"
+      PROVEN_INITIAL_CAPITAL: "400"
 
-      # Dump Trading Settings
-      AUTO_TRADE: ${AUTO_TRADE:-no}
-      DUMP_POSITION_SIZE_PERCENT: ${DUMP_POSITION_SIZE_PERCENT:-25.0}
-      DUMP_MAX_CONCURRENT_POSITIONS: ${DUMP_MAX_CONCURRENT_POSITIONS:-4}
-      DUMP_MAX_LOSS_PERCENT: ${DUMP_MAX_LOSS_PERCENT:-3.0}
-      DUMP_MIN_PROFIT_TARGET: ${DUMP_MIN_PROFIT_TARGET:-2.0}
-      DUMP_TARGET_PROFIT: ${DUMP_TARGET_PROFIT:-4.0}
-      DUMP_TRAILING_THRESHOLD: ${DUMP_TRAILING_THRESHOLD:-0.7}
-      DUMP_MIN_HOLD_TIME_MINUTES: ${DUMP_MIN_HOLD_TIME_MINUTES:-5.0}
-      DUMP_MAX_HOLD_TIME_MINUTES: ${DUMP_MAX_HOLD_TIME_MINUTES:-15.0}
-      VOLUME_SURGE_THRESHOLD: ${VOLUME_SURGE_THRESHOLD:-1.5}
-      RSI_OVERBOUGHT: ${RSI_OVERBOUGHT:-70.0}
-      SMA_PERIOD: ${SMA_PERIOD:-5}
-      DEFAULT_BUY_FEE_PERCENT: ${DEFAULT_BUY_FEE_PERCENT:-0.6}
-      DEFAULT_SELL_FEE_PERCENT: ${DEFAULT_SELL_FEE_PERCENT:-0.4}
-      USE_LIMIT_ORDERS: ${USE_LIMIT_ORDERS:-yes}
-      LIMIT_BUY_EXTRA_PCT: ${LIMIT_BUY_EXTRA_PCT:-1.0}
-      LIMIT_ORDER_TIMEOUT_MINUTES: ${LIMIT_ORDER_TIMEOUT_MINUTES:-2.0}
-      DUMP_DB_PATH: /app/data/dump_trading.db
+      # Email Notifications (Optional)
+      GMAIL_ADDRESS: ${GMAIL_ADDRESS:-}  # Your Gmail address for daily reports
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}  # Gmail app password
 
-      # General Settings
-      BACKEND_URL: http://localhost:5000
-      TELEGRAM_WEBHOOK_URL: http://localhost:8080/webhook
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Server
+      PORT: 8000
 
-    networks:
-      - app-network
-    restart: unless-stopped
-
-networks:
-  app-network:
-    driver: bridge
-    name: bot-network
-
-volumes:
-  data:
+    volumes:
+      - ./data:/app/data
+      - ./websocket-service:/app
+    command: python main.py
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

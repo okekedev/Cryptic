@@ -5,3 +5,6 @@ data/*
 *.pyc
 *.pyo
 *.db
+
+# Archive folder (old test files)
+archive/

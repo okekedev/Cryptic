@@ -19,9 +19,7 @@ coinbase-advanced-py>=1.2.0
 PyJWT==2.8.0
 cryptography>=42.0.4
 
-# Technical analysis
-numpy==1.24.3
-TA-Lib==0.4.32
+# Technical analysis (custom RSI calculator, no TA-Lib needed)
 
 # Environment & Utils
 python-dotenv==1.0.1

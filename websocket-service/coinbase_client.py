@@ -201,24 +201,42 @@ class CoinbaseClient:
             logger.error(f"Exception placing buy order: {e}")
             return {'success': False, 'error': str(e)}
 
-    def market_sell(self, product_id: str, base_amount: float) -> Dict:
+    def market_sell(self, product_id: str, base_amount: float = None) -> Dict:
         """
-        Place a market sell order
+        Place a market sell order - sells ALL available balance if base_amount not specified
 
         Args:
             product_id: Trading pair (e.g., "BTC-USD")
-            base_amount: Amount of base currency to sell (e.g., BTC quantity)
+            base_amount: Amount of base currency to sell (optional - if None, sells all available)
 
         Returns:
             Dict with success status and order details
         """
         try:
+            # Extract base currency from product_id (e.g., "MUSE" from "MUSE-USD")
+            base_currency = product_id.split('-')[0]
+
+            # If no amount specified, get actual balance and sell ALL of it
+            if base_amount is None:
+                actual_balance = self.get_account_balance(base_currency)
+                if actual_balance is None or actual_balance <= 0:
+                    logger.error(f"No {base_currency} balance found to sell")
+                    return {'success': False, 'error': f'No {base_currency} balance'}
+                base_amount = actual_balance
+                logger.info(f"Selling ALL available {base_currency}: {base_amount}")
+
             # Get product details to determine correct precision
             product_details = self.get_product_details(product_id)
-            base_increment = product_details.get('base_increment', 0.01)
+            if not product_details:
+                logger.error(f"Could not fetch product details for {product_id}, using default increment")
+                base_increment = '0.01'
+            else:
+                base_increment = product_details.get('base_increment', '0.01')
 
             # Round to product's base_increment
             base_amount_rounded = self._round_to_increment(base_amount, base_increment)
+
+            logger.info(f"Placing market SELL: {base_amount_rounded} of {product_id}")
 
             client_order_id = f"dump_sell_{product_id}_{int(datetime.now().timestamp())}"
 
@@ -353,28 +371,41 @@ class CoinbaseClient:
             logger.error(f"Exception placing limit buy order: {e}")
             return {'success': False, 'error': str(e)}
 
-    def limit_sell(self, product_id: str, base_amount: float, limit_price: float) -> Dict:
+    def limit_sell(self, product_id: str, limit_price: float, base_amount: float = None) -> Dict:
         """
-        Place a limit sell order (lower fees - maker order)
+        Place a limit sell order (lower fees - maker order) - sells ALL available balance if base_amount not specified
 
         Args:
             product_id: Trading pair (e.g., "BTC-USD")
-            base_amount: Amount of base currency to sell
             limit_price: Limit price to sell at
+            base_amount: Amount of base currency to sell (optional - if None, sells all available)
 
         Returns:
             Dict with success status and order details
         """
         try:
+            # Extract base currency from product_id (e.g., "MUSE" from "MUSE-USD")
+            base_currency = product_id.split('-')[0]
+
+            # If no amount specified, get actual balance and sell ALL of it
+            if base_amount is None:
+                actual_balance = self.get_account_balance(base_currency)
+                if actual_balance is None or actual_balance <= 0:
+                    logger.error(f"No {base_currency} balance found to sell")
+                    return {'success': False, 'error': f'No {base_currency} balance'}
+                base_amount = actual_balance
+                logger.info(f"Selling ALL available {base_currency}: {base_amount}")
+
             # Get product specifications for proper rounding
             product_details = self.get_product_details(product_id)
             if not product_details:
-                logger.error(f"Could not fetch product details for {product_id}")
-                return {'success': False, 'error': 'Could not fetch product details'}
-
-            # Round to product-specific increments
-            base_increment = product_details['base_increment']
-            quote_increment = product_details['quote_increment']
+                logger.warning(f"Could not fetch product details for {product_id}, using default increments")
+                base_increment = '0.01'
+                quote_increment = '0.01'
+            else:
+                # Round to product-specific increments
+                base_increment = product_details['base_increment']
+                quote_increment = product_details['quote_increment']
 
             base_amount_str = self._round_to_increment(base_amount, base_increment)
             limit_price_str = self._round_to_increment(limit_price, quote_increment)
@@ -389,7 +420,7 @@ class CoinbaseClient:
                     "limit_limit_gtc": {
                         "base_size": base_amount_str,
                         "limit_price": limit_price_str,
-                        "post_only": True  # Maker-only orders for lower fees (~0.4% vs ~1.2%)
+                        "post_only": True  # Use maker fees (0.6%) instead of taker (1.2%) - matches backtest
                     }
                 }
             }
