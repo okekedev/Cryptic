@@ -7,7 +7,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: okekedev/cryptic
   AZURE_CONTAINER_APP: cryptic-bot
   AZURE_RESOURCE_GROUP: cryptic-rg
 
