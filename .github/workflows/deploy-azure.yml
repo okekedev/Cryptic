@@ -63,6 +63,7 @@ jobs:
           containerAppName: ${{ env.AZURE_CONTAINER_APP }}
           resourceGroup: ${{ env.AZURE_RESOURCE_GROUP }}
           imageToDeploy: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          containerAppEnvironment: cryptic-env
           targetPort: 8000
           environmentVariables: >
             COINBASE_API_KEY=secretref:coinbase-api-key
