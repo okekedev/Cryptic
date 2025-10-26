@@ -37,6 +37,7 @@ jobs:
           tags: |
             type=raw,value=latest
             type=sha,prefix=,format=short
+            type=sha,prefix=,format=long
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -62,7 +63,7 @@ jobs:
         with:
           containerAppName: ${{ env.AZURE_CONTAINER_APP }}
           resourceGroup: ${{ env.AZURE_RESOURCE_GROUP }}
-          imageToDeploy: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          imageToDeploy: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           containerAppEnvironment: cryptic-env
           targetPort: 8000
           environmentVariables: >
